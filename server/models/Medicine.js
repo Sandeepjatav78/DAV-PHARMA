@@ -7,7 +7,8 @@ const MedicineSchema = new mongoose.Schema({
   hsnCode: { type: String },
   
   mrp: { type: Number, required: true },
-  sellingPrice: { type: Number, required: true }, // Price PER STRIP
+  sellingPrice: { type: Number, required: true }, // Legacy price PER STRIP
+  sellingPricePerTablet: { type: Number, default: 0 }, // Sale price PER TABLET
   doctorPrice: { type: Number, default: 0 },
   costPrice: { type: Number, required: true },
   

@@ -15,6 +15,7 @@ const PurchaseBillItemSchema = new mongoose.Schema({
   rate: { type: Number, required: true },
   netRate: { type: Number },
   sellingPrice: { type: Number, required: true },
+  sellingPricePerTablet: { type: Number, default: 0 },
   discount: { type: Number, default: 0 },
   gst: { type: Number, default: 0 },
   amount: { type: Number, required: true }
@@ -25,8 +26,8 @@ const PurchaseBillSchema = new mongoose.Schema({
   supplierGstin: { type: String },
   invoiceNumber: { type: String, required: true },
   invoiceDate: { type: Date, required: true },
-  billType: { type: String, default: 'Credit' },
-  paymentMode: { type: String, default: 'Credit' },
+  billType: { type: String, default: 'Cash' },
+  paymentMode: { type: String, default: 'Cash' },
   notes: { type: String },
   billImage: { type: String },
   billImages: { type: [String], default: [] },

@@ -3,9 +3,17 @@ import api from '../api/axios';
 
 const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', netRate: '', sellingPrice: '', discount: '0', gst: '5', amount: '' });
 const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
-const defaultSellingPrice = (mrp) => {
+const tabletsPerStrip = (packing, fallback = 1) => {
+  const text = String(packing || '');
+  const match = text.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i);
+  if (match) return Number(match[2]) || fallback;
+  const single = text.match(/(\d+(?:\.\d+)?)\s*(?:tab|tablet| गोली)/i);
+  return single ? Number(single[1]) || fallback : fallback;
+};
+const defaultSellingPrice = (mrp, packing, packSize) => {
   const value = Number(mrp);
-  return Number.isFinite(value) && value > 0 ? (value * 0.9).toFixed(2) : '';
+  const size = Number(packSize) || tabletsPerStrip(packing);
+  return Number.isFinite(value) && value > 0 ? (value / size * 0.9).toFixed(2) : '';
 };
 
 const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
@@ -74,7 +82,7 @@ const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
 };
 
 const PurchaseBillEntry = () => {
-  const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
+  const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Cash', paymentMode: 'Cash', paymentStatus: 'Paid', notes: '', additionalDiscount: '0', billFiles: [] });
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -166,7 +174,7 @@ const PurchaseBillEntry = () => {
             netRate: String(item.netRate ?? item.rate ?? ''),
             sellingPrice: item.sellingPrice != null && item.sellingPrice !== ''
               ? String(item.sellingPrice)
-              : defaultSellingPrice(item.mrp),
+              : defaultSellingPrice(item.mrp, item.packing),
             discount: String(item.discount ?? 0),
             gst: String(item.gst ?? 5),
             amount: item.amount != null && Number(item.amount) > 0 ? String(item.amount) : ''
@@ -226,13 +234,23 @@ const PurchaseBillEntry = () => {
     setItems(prev => prev.map((item, itemIndex) => {
       if (itemIndex !== index) return item;
       if (field === 'mrp') {
-        const previousDefault = Number(item.mrp || 0) * 0.9;
+        const previousDefault = Number(item.mrp || 0) / tabletsPerStrip(item.packing) * 0.9;
         const currentSellingPrice = Number(item.sellingPrice);
         const shouldUpdateDefault = item.sellingPrice === '' || Math.abs(currentSellingPrice - previousDefault) < 0.01;
         return {
           ...item,
           mrp: value,
           ...(shouldUpdateDefault ? { sellingPrice: defaultSellingPrice(value) } : {})
+        };
+      }
+      if (field === 'packing') {
+        const previousDefault = Number(item.mrp || 0) / tabletsPerStrip(item.packing) * 0.9;
+        const currentSellingPrice = Number(item.sellingPrice);
+        const shouldUpdateDefault = item.sellingPrice === '' || Math.abs(currentSellingPrice - previousDefault) < 0.01;
+        return {
+          ...item,
+          packing: value,
+          ...(shouldUpdateDefault ? { sellingPrice: defaultSellingPrice(item.mrp, value) } : {})
         };
       }
       return { ...item, [field]: value };
@@ -285,7 +303,7 @@ const PurchaseBillEntry = () => {
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
       setErrors({});
       setDuplicateWarning(null);
-      setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
+      setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Cash', paymentMode: 'Cash', paymentStatus: 'Paid', notes: '', additionalDiscount: '0', billFiles: [] });
       setItems([emptyItem()]);
     } catch (error) {
       alert(error.response?.data?.message || 'Purchase bill save nahi ho saka.');
@@ -456,7 +474,7 @@ const PurchaseBillEntry = () => {
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 p-4 md:px-5"><div><h2 className="font-bold text-slate-800">Medicines</h2><p className="text-xs text-slate-500">Free quantity bhi inventory stock mein add hogi.</p></div><button type="button" onClick={() => setItems([...items, emptyItem()])} className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700">+ Add Medicine</button></div>
-        <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{['Medicine Name *', 'Packing', 'Batch *', 'Mfr.', 'HSN', 'Expiry *', 'Qty *', 'Free', 'MRP *', 'Rate *', 'Net Rate', 'Sale Price', 'Disc %', 'GST %', 'Price', ''].map(title => <th key={title} className="whitespace-nowrap px-2 py-3 font-bold">{title}</th>)}</tr></thead><tbody>
+        <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{['Medicine Name *', 'Packing', 'Batch *', 'Mfr.', 'HSN', 'Expiry *', 'Qty *', 'Free', 'MRP *', 'Rate *', 'Net Rate', 'Sale Price/Tab', 'Disc %', 'GST %', 'Price', ''].map(title => <th key={title} className="whitespace-nowrap px-2 py-3 font-bold">{title}</th>)}</tr></thead><tbody>
           {items.map((item, index) => <tr key={index} className="border-t border-slate-100 align-top">
             <td className="p-2"><MedicineNameCell
               inputId={`field-row${index}-productName`}
@@ -473,7 +491,7 @@ const PurchaseBillEntry = () => {
                   hsnCode: med.hsnCode || it.hsnCode,
                   gst: med.gst != null ? String(med.gst) : it.gst,
                   mrp: med.mrp != null ? String(med.mrp) : it.mrp,
-                  sellingPrice: it.sellingPrice || defaultSellingPrice(med.mrp)
+                  sellingPrice: it.sellingPrice || defaultSellingPrice(med.mrp, `${med.packSize || 1} TAB`, med.packSize)
                 };
               }))}
             /></td>

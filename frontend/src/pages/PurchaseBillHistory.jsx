@@ -6,9 +6,10 @@ const dateFmt = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-dig
 const toInputDate = (d) => d.toISOString().slice(0, 10);
 const monthStart = () => { const d = new Date(); d.setDate(1); return toInputDate(d); };
 const today = () => toInputDate(new Date());
-const defaultSellingPrice = (mrp) => {
+const defaultSellingPrice = (mrp, packSize = 1) => {
   const value = Number(mrp);
-  return Number.isFinite(value) && value > 0 ? (value * 0.9).toFixed(2) : '';
+  const size = Number(packSize) || 1;
+  return Number.isFinite(value) && value > 0 ? (value / size * 0.9).toFixed(2) : '';
 };
 
 const PurchaseBillHistory = () => {
@@ -73,8 +74,8 @@ const PurchaseBillHistory = () => {
       supplierGstin: bill.supplierGstin || '',
       invoiceNumber: bill.invoiceNumber || '',
       invoiceDate: bill.invoiceDate ? String(bill.invoiceDate).slice(0, 10) : '',
-      billType: bill.billType || 'Credit',
-      paymentMode: bill.paymentMode || 'Credit',
+      billType: bill.billType || 'Cash',
+      paymentMode: bill.paymentMode || 'Cash',
       notes: bill.notes || '',
       additionalDiscount: String(bill.additionalDiscount ?? '0')
     });
@@ -90,7 +91,7 @@ const PurchaseBillHistory = () => {
       mrp: String(item.mrp ?? ''),
       rate: String(item.rate ?? ''),
       netRate: String(item.netRate ?? item.rate ?? ''),
-      sellingPrice: String(item.sellingPrice ?? '') || defaultSellingPrice(item.mrp),
+      sellingPrice: String(item.sellingPricePerTablet ?? '') || defaultSellingPrice(item.mrp, item.packSize),
       discount: String(item.discount ?? '0'),
       gst: String(item.gst ?? '5'),
       amount: String(item.amount ?? '')
@@ -105,7 +106,7 @@ const PurchaseBillHistory = () => {
     setEditItems(prev => prev.map((item, i) => {
       if (i !== index) return item;
       if (field === 'mrp') {
-        const previousDefault = Number(item.mrp || 0) * 0.9;
+        const previousDefault = Number(item.mrp || 0) / (Number(item.packSize) || 1) * 0.9;
         const currentSellingPrice = Number(item.sellingPrice);
         const shouldUpdateDefault = item.sellingPrice === '' || Math.abs(currentSellingPrice - previousDefault) < 0.01;
         return {
@@ -554,7 +555,7 @@ const PurchaseBillHistory = () => {
                       <th className="px-2 py-2 text-right">MRP *</th>
                       <th className="px-2 py-2 text-right">Rate *</th>
                       <th className="px-2 py-2 text-right">Net Rate</th>
-                      <th className="px-2 py-2 text-right">Sale Price</th>
+                      <th className="px-2 py-2 text-right">Sale Price/Tab</th>
                       <th className="px-2 py-2 text-right">Disc %</th>
                       <th className="px-2 py-2 text-right">GST %</th>
                       <th className="px-2 py-2 text-right">Price</th>

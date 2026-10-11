@@ -278,9 +278,7 @@ const SaleForm = () => {
 
   // --- LOGIC ---
   const calculateRowTotal = (price, qty, unit, packSize) => {
-    let effectivePrice = price;
-    if (unit === 'loose') { effectivePrice = price / (packSize || 1); }
-    return effectivePrice * qty;
+    return price * qty;
   };
 
   const handleRateChange = (index, newRate) => {
@@ -310,7 +308,21 @@ const SaleForm = () => {
   const toggleUnit = (index, specificUnit = null) => {
     const newCart = [...cart];
     const item = newCart[index];
-    if (specificUnit) { item.unit = specificUnit; } else { item.unit = item.unit === 'pack' ? 'loose' : 'pack'; }
+    const nextUnit = specificUnit || (item.unit === 'pack' ? 'loose' : 'pack');
+    if (nextUnit !== item.unit) {
+      const packSize = Number(item.packSize) || 1;
+      if (nextUnit === 'loose') {
+        item.price = Number((item.price / packSize).toFixed(2));
+        item.mrp = Number((item.mrp / packSize).toFixed(2));
+      } else {
+        item.price = Number((item.price * packSize).toFixed(2));
+        item.mrp = Number((item.mrp * packSize).toFixed(2));
+      }
+    }
+    item.unit = nextUnit;
+    if (!isStaff && item.mrp > 0) {
+      item.discount = parseFloat((((item.mrp - item.price) / item.mrp) * 100).toFixed(2));
+    }
     item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
     setCart(newCart);
   };
@@ -352,7 +364,9 @@ const SaleForm = () => {
 
     setLastSale(null);
     const idx = cart.findIndex((item) => item.medicineId === med._id);
-    const discount = med.mrp > 0 ? ((med.mrp - med.sellingPrice) / med.mrp) * 100 : 0;
+    const packSellingPrice = Number(med.sellingPrice || 0);
+    const tabletSellingPrice = Number(med.sellingPricePerTablet || (packSellingPrice / packSize));
+    const discount = med.mrp > 0 ? ((med.mrp - (tabletSellingPrice * packSize)) / med.mrp) * 100 : 0;
 
     if (idx !== -1) {
       const newCart = [...cart];
@@ -367,9 +381,9 @@ const SaleForm = () => {
     } else {
       const initialUnit = availablePacks >= 1 ? 'pack' : 'loose';
       const initialQuantity = initialUnit === 'pack' ? 1 : Number(med.looseQty) || 0;
-      const initialPrice = med.sellingPrice;
+      const initialPrice = initialUnit === 'pack' ? tabletSellingPrice * packSize : tabletSellingPrice;
       setCart([...cart, {
-          medicineId: med._id, name: med.productName, mrp: med.mrp, price: med.sellingPrice,
+          medicineId: med._id, name: med.productName, mrp: initialUnit === 'pack' ? med.mrp : (med.mrp / packSize), price: initialPrice,
           costPrice: med.costPrice || 0, maxDiscount: med.maxDiscount || 0, discount: discount.toFixed(2),
           gst: med.gst || 0, hsn: String(med.hsnCode || '').trim(), batch: med.batchNumber || "N/A", expiry: med.expiryDate,
           purchaseInvoiceNo: med.purchaseInvoiceNo || "", partyName: med.partyName || "",
@@ -607,7 +621,7 @@ const SaleForm = () => {
                     
                     <div className="text-right">
                       <div className="font-bold text-teal-600 text-base">
-                        ₹{med.sellingPrice}
+                        ₹{Number(med.sellingPricePerTablet || ((Number(med.sellingPrice) || 0) / (Number(med.packSize) || 1))).toFixed(2)} / tab
                       </div>
                       {!isStaff && (
                         <div className="text-xs text-gray-400 line-through">
