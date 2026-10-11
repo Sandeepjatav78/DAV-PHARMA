@@ -30,12 +30,13 @@ const allowedOrigins = new Set([
 ]);
 
 const isLocalhostOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
+const isDavPharmaVercelOrigin = (origin) => /^https:\/\/dav-pharma(?:-[a-z0-9-]+)?\.vercel\.app$/.test(origin);
 
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow non-browser requests (no Origin header), explicitly whitelisted frontends,
     // and any localhost port (Vite auto-increments when 5173 is taken).
-    if (!origin || allowedOrigins.has(origin) || isLocalhostOrigin(origin)) {
+    if (!origin || allowedOrigins.has(origin) || isLocalhostOrigin(origin) || isDavPharmaVercelOrigin(origin)) {
       return callback(null, true);
     }
     return callback(new Error(`CORS blocked for origin: ${origin}`));
