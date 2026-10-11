@@ -183,13 +183,17 @@ const PurchaseBillEntry = () => {
               ? String(item.sellingPrice)
               : defaultSellingPrice(item.mrp, item.packing),
             discount: String(item.discount ?? 0),
-            gst: String(item.gst ?? 5),
+            gst: String(item.gst ?? 0),
             amount: item.amount != null && Number(item.amount) > 0 ? String(item.amount) : ''
           }));
           setItems(scannedItems);
         }
         setErrors({});
-        alert('✨ AI Scanner: Purchase bill parsed and auto-filled successfully!');
+        const gstWarnings = (res.data.data.warnings || [])
+          .filter(w => (w.issues || []).some(issue => issue.toLowerCase().includes('gst')))
+          .map(w => `${w.productName}: GST verify karein`)
+          .join('\n');
+        alert(`✨ AI Scanner: Purchase bill parsed and auto-filled successfully!${gstWarnings ? `\n\n⚠️ GST check:\n${gstWarnings}` : ''}`);
       }
     } catch (error) {
       console.error(error);

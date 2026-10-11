@@ -862,7 +862,7 @@ const createPurchaseBill = async (req, res) => {
       const share = taxableTotal > 0 ? taxableAmount / taxableTotal : 0;
       const taxableAfterExtraDiscount = taxableAmount - additionalDiscount * share;
       const gstAmount = taxableAfterExtraDiscount * (item.gst / 100);
-      const lineAmount = Number((taxableAmount + gstAmount).toFixed(2));
+      const lineAmount = Number((taxableAfterExtraDiscount + gstAmount).toFixed(2));
       return { ...item, amount: lineAmount, taxableAmount, discountAmount, gstAmount };
     });
 
@@ -1012,7 +1012,7 @@ const updatePurchaseBill = async (req, res) => {
       const share = taxableTotal > 0 ? taxableAmount / taxableTotal : 0;
       const taxableAfterExtraDiscount = taxableAmount - additionalDiscount * share;
       const gstAmount = taxableAfterExtraDiscount * (item.gst / 100);
-      const lineAmount = Number((taxableAmount + gstAmount).toFixed(2));
+      const lineAmount = Number((taxableAfterExtraDiscount + gstAmount).toFixed(2));
       return { ...item, amount: lineAmount, taxableAmount, discountAmount, gstAmount };
     });
 
@@ -1164,7 +1164,19 @@ const deletePurchaseBill = async (req, res) => {
 // - derive rate from line amount when rate is missing
 // - collect warnings for rows the user must fix manually
 const cleanScannedItems = (items = []) => {
-  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const num = (v) => {
+    if (typeof v === 'string') {
+      const parts = v.replace(/,/g, '').replace(/%/g, '').match(/\d+(?:\.\d+)?/g);
+      if (parts?.length > 1 && /[+/&]/.test(v)) {
+        const total = parts.reduce((sum, part) => sum + Number(part), 0);
+        return Number.isFinite(total) ? total : 0;
+      }
+      const parsed = Number(parts?.[0] ?? v);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
   const str = (v) => String(v ?? '').trim();
   const stripFreeWords = (name) => str(name).toLowerCase().replace(/\b(free|foc|n\.c\.?|nc|with purchase|complementary)\b/g, ' ').replace(/\s+/g, ' ').trim();
   const similarName = (a, b) => {
@@ -1186,7 +1198,7 @@ const cleanScannedItems = (items = []) => {
     netRate: Math.max(0, num(item.netRate ?? item.rate)),
     sellingPrice: Math.max(0, num(item.sellingPrice)),
     discount: Math.max(0, num(item.discount)),
-    gst: Math.max(0, num(item.gst)),
+    gst: Math.max(0, Math.min(100, num(item.gst))),
     quantity: Math.max(1, num(item.quantity)),
     freeQuantity: Math.max(0, num(item.freeQuantity)),
     amount: Math.max(0, num(item.amount))
@@ -1248,6 +1260,7 @@ const cleanScannedItems = (items = []) => {
     if (!row.expiryDate) issues.push('Expiry date missing');
     if (row.rate === 0 && row.freeQuantity === 0 && row.amount === 0) issues.push('Rate missing (may be FREE item)');
     if (row.mrp === 0) issues.push('MRP missing');
+    if (row.gst === 0) issues.push('GST rate not found — verify the GST column on the bill');
     if (issues.length) warnings.push({ index: i + 1, productName: row.productName, issues });
   });
 
@@ -1344,7 +1357,7 @@ Analyze this invoice image${pages.length > 1 ? 's' : ''} and extract all details
       "netRate": "The ACTUAL per-unit price the pharmacy pays AFTER all scheme/discount is applied. If the bill shows a separate Net Rate / Net Price / Effective Rate column, use that EXACT value. If not shown, calculate it: netRate = lineAmount / quantity. For scheme items (e.g. 1+1 free) divide by TOTAL pieces received (paid + free). Never leave it blank — use rate as fallback.",
       "sellingPrice": 0,
       "discount": 0,
-      "gst": 5,
+      "gst": 0,
       "quantity": 5.00,
       "freeQuantity": 0,
       "amount": 236.25
@@ -1360,6 +1373,9 @@ QUANTITY & FREE ITEMS RULES (CRITICAL — READ CAREFULLY):
 - "rate" is the per-unit charge for the item. A free line always has rate 0.
 - "netRate" is the real per-unit cost paid after scheme/discount (very important). Prefer the bill's printed Net Rate column; else compute lineAmount / totalPiecesReceived.
 - "amount" = final line amount EXACTLY as printed on the bill. NEVER recalculate it — trust the printed value. If no printed amount, calculate: quantity × rate × (1 − discount/100) × (1 + gst/100).
+- GST EXTRACTION (CRITICAL): Read the tax column from the item row, not the MRP, discount, or invoice total. The column may be labelled GST%, Tax%, IGST%, CGST%, SGST%, VAT%, or Tax. If the bill has separate CGST% and SGST% columns, add them (for example CGST 2.5 + SGST 2.5 = gst 5). If it has IGST%, use that value directly. If the bill shows CGST/SGST tax AMOUNTS instead of percentages, calculate the percentage from the taxable line value: (CGST amount + SGST amount) / taxable value × 100. Distinguish tax rate percentages from tax rupee amounts.
+- Common valid GST rates are 0, 5, 12, 18, and 28, but use the exact printed rate when it is different. Never assume 5% when the tax column is unreadable or missing; use gst: 0 and let the user verify it.
+- Cross-check GST against the bill totals: sum each item's taxable value × gst% / 100 and compare with the printed CGST+SGST/IGST total. If it does not match, re-read the row tax columns and correct the item GST rates before returning JSON.
 - "sellingPrice" = the pharmacy's sale price per tablet. If the bill does not show a selling price, calculate it as (MRP / tablets per strip) × 0.90. The pharmacy user can edit this value before saving.
 
 DISCOUNT EXTRACTION RULES (IMPORTANT — read carefully, this is commonly missed):
