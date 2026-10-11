@@ -4,6 +4,7 @@ const Counter = require('../models/Counter');
 const AuditLog = require('../models/AuditLog');
 const Credit = require('../models/Credit');
 const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES } = require('../utils/scheduleDetector');
+const { getTotalUnits, setStockFromUnits, getRequestedUnits } = require('../utils/stockUnits');
 
 // Invoice formatting configuration: DAV-YYYYMM-0001
 const INVOICE_DIGITS = 6; // e.g. DAV-202610-000001
@@ -259,12 +260,12 @@ exports.createSale = async (req, res) => {
       // NOTE: selling before the purchase date is intentionally allowed now —
       // the purchase invoice number is captured above for traceability.
 
-      const currentQty = med.quantity || 0; // Stored in strips (can be decimal)
-      const requestedQty = Number(item.quantity) || 0; // Also in strips
+      const currentUnits = getTotalUnits(med);
+      const requestedUnits = getRequestedUnits(item, med.packSize);
 
-      if (requestedQty > currentQty + 1e-6) {
+      if (requestedUnits > currentUnits) {
         return res.status(400).json({
-          message: `Insufficient stock for ${med.productName}. Available: ${currentQty.toFixed(2)}, Requested: ${requestedQty.toFixed(2)}`
+          message: `Insufficient stock for ${med.productName}. Available: ${currentUnits} units, Requested: ${requestedUnits} units`
         });
       }
     }
@@ -397,9 +398,12 @@ exports.createSale = async (req, res) => {
     // Runs for Manual Bill items ONLY if they are linked to a medicine ID
     for (const item of sanitizedItems) {
         if (item.medicineId) {
-            await Medicine.findByIdAndUpdate(item.medicineId, {
-                $inc: { quantity: -item.quantity }
-            });
+            const med = await Medicine.findById(item.medicineId);
+            if (med) {
+              const requestedUnits = getRequestedUnits(item, med.packSize);
+              setStockFromUnits(med, getTotalUnits(med) - requestedUnits, med.packSize);
+              await med.save();
+            }
         }
     }
 
@@ -526,9 +530,11 @@ exports.deleteSale = async (req, res) => {
         // Restore Stock
         for (const item of sale.items) {
             if (item.medicineId) {
-                await Medicine.findByIdAndUpdate(item.medicineId, { 
-                    $inc: { quantity: item.quantity } 
-                });
+                const med = await Medicine.findById(item.medicineId);
+                if (med) {
+                  setStockFromUnits(med, getTotalUnits(med) + getRequestedUnits(item, item.packSize || med.packSize), med.packSize);
+                  await med.save();
+                }
             }
         }
 
@@ -562,9 +568,11 @@ exports.updateSale = async (req, res) => {
         // 1. Revert Old Stock
         for (const item of originalSale.items) {
             if (item.medicineId) {
-                await Medicine.findByIdAndUpdate(item.medicineId, { 
-                    $inc: { quantity: item.quantity } 
-                });
+                const med = await Medicine.findById(item.medicineId);
+                if (med) {
+                  setStockFromUnits(med, getTotalUnits(med) + getRequestedUnits(item, item.packSize || med.packSize), med.packSize);
+                  await med.save();
+                }
             }
         }
 
@@ -573,9 +581,11 @@ exports.updateSale = async (req, res) => {
         const updatedMeds = [];
         for (const item of updatedSaleData.items) {
             if (item.medicineId) {
-                const med = await Medicine.findByIdAndUpdate(item.medicineId, {
-                    $inc: { quantity: -item.quantity }
-                }, { new: true });
+                const med = await Medicine.findById(item.medicineId);
+                if (med) {
+                  setStockFromUnits(med, getTotalUnits(med) - getRequestedUnits(item, med.packSize), med.packSize);
+                  await med.save();
+                }
                 updatedMeds.push({ item, med });
                 if (med && !med.scheduleAiChecked) {
                     updatePendingScheduleCheck.push({ medicineId: String(item.medicineId), productName: med.productName });

@@ -62,6 +62,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
   const handleExport = () => {
     const dataToExport = filteredMeds.map(m => {
         const packSize = m.packSize || 10;
+        const stripsPerBox = m.stripsPerBox || 1;
         const strips = Math.floor(m.quantity || 0);
         const loose = Math.round(m.looseQty || 0);
 
@@ -70,7 +71,9 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
             "HSN": m.hsnCode || '-',
             "Batch": m.batchNumber,
             "Party Name": m.partyName || '-',
-            "Packing": packSize,
+            "Packing": m.packing || `${stripsPerBox}x${packSize} TAB`,
+            "Strips per Box": stripsPerBox,
+            "Tablets per Strip": packSize,
             "Qty (Sealed Strips)": strips,
             "Loose (Open Tabs)": loose,
             "MRP": m.mrp,
@@ -132,6 +135,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
       setEditFormData({
           ...med,
           packSize: med.packSize || '',
+          stripsPerBox: med.stripsPerBox || 1,
           quantity: med.quantity || 0,
           doctorPrice: med.doctorPrice ?? '',
           gst: med.gst || 0
@@ -344,7 +348,12 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     <td className={tdClass}><input name="batchNumber" value={editFormData.batchNumber} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="hsnCode" value={editFormData.hsnCode || ''} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="partyName" value={editFormData.partyName || ''} onChange={handleEditFormChange} className={inputEditClass} /></td>
-                    <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} /></td>
+                    <td className={tdClass}>
+                        <div className="flex gap-1">
+                            <input name="stripsPerBox" title="Strips per box" type="number" min="1" value={editFormData.stripsPerBox || 1} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} />
+                            <input name="packSize" title="Tablets per strip" type="number" min="1" value={editFormData.packSize || ''} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} />
+                        </div>
+                    </td>
 
                     <td className={tdClass}><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-green-700`} /></td>
@@ -397,7 +406,11 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     <td className={`${tdClass} text-gray-500`}>{m.batchNumber}</td>
                     <td className={`${tdClass} text-gray-500`}>{m.hsnCode || '-'}</td>
                     <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
-                    <td className={`${tdClass} text-center font-semibold text-gray-600`}>{m.packSize || 10}</td>
+                    <td className={`${tdClass} text-center font-semibold text-gray-600`}>
+                        <span title={`${m.stripsPerBox || 1} strips per box, ${m.packSize || 10} tablets per strip`}>
+                            {m.stripsPerBox || 1} strip × {m.packSize || 10} tab
+                        </span>
+                    </td>
 
                     <td className={tdClass}>{m.mrp}</td>
                     <td className={`${tdClass} font-bold text-green-700`}>₹{m.sellingPrice}</td>

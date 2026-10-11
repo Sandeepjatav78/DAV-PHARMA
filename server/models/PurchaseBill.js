@@ -9,6 +9,8 @@ const PurchaseBillItemSchema = new mongoose.Schema({
   expiryDate: { type: Date, required: true },
   quantity: { type: Number, required: true },
   freeQuantity: { type: Number, default: 0 },
+  packSize: { type: Number, default: 1 }, // tablets per strip
+  stripsPerBox: { type: Number, default: 1 }, // strips per box
   mrp: { type: Number, required: true },
   rate: { type: Number, required: true },
   netRate: { type: Number },

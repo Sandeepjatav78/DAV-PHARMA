@@ -7,6 +7,7 @@ const PurchaseBill = require('../models/PurchaseBill');
 const Supplier = require('../models/Supplier');
 const cloudinary = require('cloudinary').v2;
 const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES, SCHEDULE_INFO } = require('../utils/scheduleDetector');
+const { parsePacking, addStock, getTotalUnits, setStockFromUnits } = require('../utils/stockUnits');
 
 // --- SHARED HELPERS (supplier matching / ledger) ---
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -374,6 +375,7 @@ const updateMedicine = async (req, res) => {
       quantity: safeNumber(req.body.quantity),
       looseQty: safeNumber(req.body.looseQty),
       packSize: safeNumber(req.body.packSize), // <--- FIX FOR PACK SIZE
+      stripsPerBox: safeNumber(req.body.stripsPerBox),
       gst: safeNumber(req.body.gst),
     };
 
@@ -831,6 +833,9 @@ const createPurchaseBill = async (req, res) => {
       const expiryDate = item.expiryDate;
       const quantity = number(item.quantity);
       const freeQuantity = number(item.freeQuantity);
+      const packingInfo = parsePacking(item.packing, item.packSize, item.stripsPerBox);
+      const packSize = packingInfo.tabletsPerStrip;
+      const stripsPerBox = packingInfo.stripsPerBox;
       const mrp = number(item.mrp);
       const rate = number(item.rate);
       const netRate = number(item.netRate, rate);
@@ -843,7 +848,7 @@ const createPurchaseBill = async (req, res) => {
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
       const taxableAmount = gross - discountAmount;
-      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, gross, discountAmount, taxableAmount };
+      return { productName, packing: String(item.packing || '').trim(), packSize, stripsPerBox, batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, gross, discountAmount, taxableAmount };
     });
 
     const subtotal = preItems.reduce((sum, item) => sum + item.gross, 0);
@@ -906,15 +911,16 @@ const createPurchaseBill = async (req, res) => {
 
     for (const item of validItems) {
       const existing = existingByItem.get(item);
-      const stockAdded = item.quantity + item.freeQuantity;
-      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: primaryBillImage };
+      const medicineData = { packing: item.packing, stripsPerBox: item.stripsPerBox, mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: primaryBillImage };
       if (existing) {
-        existing.quantity = Number(existing.quantity || 0) + stockAdded;
+        addStock(existing, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
         Object.assign(existing, medicineData);
         await existing.save();
       } else {
         const scheduleResult = newItemScheduleMap.get(String(item.productName || '').trim());
-        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
+        const stock = { quantity: 0, looseQty: 0, packSize: item.packSize };
+        addStock(stock, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
+        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stock.quantity, looseQty: stock.looseQty, packSize: stock.packSize, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
       }
     }
 
@@ -976,6 +982,9 @@ const updatePurchaseBill = async (req, res) => {
       const expiryDate = item.expiryDate;
       const quantity = number(item.quantity);
       const freeQuantity = number(item.freeQuantity);
+      const packingInfo = parsePacking(item.packing, item.packSize, item.stripsPerBox);
+      const packSize = packingInfo.tabletsPerStrip;
+      const stripsPerBox = packingInfo.stripsPerBox;
       const mrp = number(item.mrp);
       const rate = number(item.rate);
       const netRate = number(item.netRate, rate);
@@ -988,7 +997,7 @@ const updatePurchaseBill = async (req, res) => {
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
       const taxableAmount = gross - discountAmount;
-      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, gross, discountAmount, taxableAmount };
+      return { productName, packing: String(item.packing || '').trim(), packSize, stripsPerBox, batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, gross, discountAmount, taxableAmount };
     });
 
     const subtotal = preItems.reduce((sum, item) => sum + item.gross, 0);
@@ -1015,9 +1024,9 @@ const updatePurchaseBill = async (req, res) => {
     for (const oldItem of existingBill.items || []) {
       const med = await Medicine.findOne({ productName: { $regex: `^${oldItem.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${oldItem.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       if (!med) continue;
-      const revertQty = Number(oldItem.quantity || 0) + Number(oldItem.freeQuantity || 0);
-      med.quantity = Math.max(0, Number(med.quantity || 0) - revertQty);
-      if (med.quantity === 0) await Medicine.deleteOne({ _id: med._id });
+      const revertUnits = Math.round((Number(oldItem.quantity || 0) + Number(oldItem.freeQuantity || 0)) * (Number(oldItem.stripsPerBox) || 1) * (Number(med.packSize) || 1));
+      setStockFromUnits(med, getTotalUnits(med) - revertUnits, med.packSize);
+      if (getTotalUnits(med) === 0) await Medicine.deleteOne({ _id: med._id });
       else await med.save();
     }
 
@@ -1036,15 +1045,16 @@ const updatePurchaseBill = async (req, res) => {
 
     for (const item of validItems) {
       const existing = existingByUpdateItem.get(item);
-      const stockAdded = item.quantity + item.freeQuantity;
-      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: updatedPrimaryBillImage };
+      const medicineData = { packing: item.packing, stripsPerBox: item.stripsPerBox, mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: updatedPrimaryBillImage };
       if (existing) {
-        existing.quantity = Number(existing.quantity || 0) + stockAdded;
+        addStock(existing, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
         Object.assign(existing, medicineData);
         await existing.save();
       } else {
         const scheduleResult = newUpdateScheduleMap.get(String(item.productName || '').trim());
-        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
+        const stock = { quantity: 0, looseQty: 0, packSize: item.packSize };
+        addStock(stock, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
+        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stock.quantity, looseQty: stock.looseQty, packSize: stock.packSize, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
       }
     }
 
@@ -1130,9 +1140,9 @@ const deletePurchaseBill = async (req, res) => {
     for (const item of bill.items || []) {
       const med = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       if (!med) continue;
-      const revertQty = Number(item.quantity || 0) + Number(item.freeQuantity || 0);
-      med.quantity = Math.max(0, Number(med.quantity || 0) - revertQty);
-      if (med.quantity === 0) await Medicine.deleteOne({ _id: med._id });
+      const revertUnits = Math.round((Number(item.quantity || 0) + Number(item.freeQuantity || 0)) * (Number(item.stripsPerBox) || 1) * (Number(med.packSize) || 1));
+      setStockFromUnits(med, getTotalUnits(med) - revertUnits, med.packSize);
+      if (getTotalUnits(med) === 0) await Medicine.deleteOne({ _id: med._id });
       else await med.save();
     }
 
@@ -1322,7 +1332,7 @@ Analyze this invoice image${pages.length > 1 ? 's' : ''} and extract all details
   "items": [
     {
       "productName": "Name of medicine / item e.g. ARISTO POVIDON 10 LOTION",
-      "packing": "Pack size e.g. 100 ML, 15CAP, 15 TAB, 10 TAB",
+      "packing": "Exact printed packing. Preserve box notation such as 10x10 TAB (10 strips per box, 10 tablets per strip); do not reduce it to only one number.",
       "manufacturer": "Mfr name e.g. ARISTO, CADILA, ELDER, ALKEM",
       "batchNumber": "Batch number e.g. PS226127",
       "expiryDate": "YYYY-MM-DD format e.g. 2028-03-31",

@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const MedicineSchema = new mongoose.Schema({
   productName: { type: String, required: true },
   batchNumber: { type: String, required: true },
+  packing: { type: String, default: '' },
   hsnCode: { type: String },
   
   mrp: { type: Number, required: true },
@@ -15,6 +16,7 @@ const MedicineSchema = new mongoose.Schema({
   
   quantity: { type: Number, required: true }, // SEALED STRIPS (पत्ते)
   packSize: { type: Number, default: 10 },    // 1 पत्ते में कितनी गोली
+  stripsPerBox: { type: Number, default: 1 }, // 1 box में कितनी strips
   
   // --- NEW FIELD: LOOSE TABLETS ---
   looseQty: { type: Number, default: 0 }, // खुल्ली गोलियां (जैसे 2, 4)

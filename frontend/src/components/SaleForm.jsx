@@ -326,14 +326,16 @@ const SaleForm = () => {
     const newCart = [...cart];
     const item = newCart[index];
     const requiredStock = item.unit === 'loose' ? (newQty / item.packSize) : newQty;
-    if (requiredStock > item.maxStock) { return alert(`⚠️ Stock Limit Exceeded!\nAvailable: ${item.maxStock} Packs`); }
+    if (requiredStock > Number(item.maxStock || 0)) { return alert(`⚠️ Stock Limit Exceeded!\nAvailable: ${Number(item.maxStock || 0).toFixed(2)} Packs`); }
     item.quantity = newQty;
     item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
     setCart(newCart);
   };
 
   const addToCart = (med) => {
-    if (med.quantity <= 0) return alert("❌ This item is OUT OF STOCK!");
+    const packSize = Number(med.packSize) || 1;
+    const availablePacks = (Number(med.quantity) || 0) + ((Number(med.looseQty) || 0) / packSize);
+    if (availablePacks <= 0) return alert("❌ This item is OUT OF STOCK!");
     if (isStaff && !String(med.hsnCode || '').trim()) {
       return alert("❌ This product has no HSN. Staff cannot bill it.");
     }
@@ -357,18 +359,22 @@ const SaleForm = () => {
       const item = newCart[idx];
       const newQty = item.quantity + 1;
       const requiredStock = item.unit === 'loose' ? (newQty / item.packSize) : newQty;
-      if (requiredStock <= med.quantity) {
+      if (requiredStock <= availablePacks) {
         item.quantity += 1;
         item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
         setCart(newCart);
-      } else { alert(`Stock Limit: ${med.quantity}`); }
+      } else { alert(`Stock Limit: ${availablePacks.toFixed(2)} packs`); }
     } else {
+      const initialUnit = availablePacks >= 1 ? 'pack' : 'loose';
+      const initialQuantity = initialUnit === 'pack' ? 1 : Number(med.looseQty) || 0;
+      const initialPrice = med.sellingPrice;
       setCart([...cart, {
           medicineId: med._id, name: med.productName, mrp: med.mrp, price: med.sellingPrice,
           costPrice: med.costPrice || 0, maxDiscount: med.maxDiscount || 0, discount: discount.toFixed(2),
           gst: med.gst || 0, hsn: String(med.hsnCode || '').trim(), batch: med.batchNumber || "N/A", expiry: med.expiryDate,
           purchaseInvoiceNo: med.purchaseInvoiceNo || "", partyName: med.partyName || "",
-          quantity: 1, maxStock: med.quantity, packSize: med.packSize || 1, unit: 'pack', total: med.sellingPrice 
+          quantity: initialQuantity, maxStock: availablePacks, packSize, unit: initialUnit,
+          total: calculateRowTotal(initialPrice, initialQuantity, initialUnit, packSize)
       }]);
     }
     setQuery(""); setResults([]);
@@ -580,11 +586,11 @@ const SaleForm = () => {
                       </div>
                       
                       <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-2 items-center">
-                        {med.quantity <= 0 ? (
+                        {((Number(med.quantity) || 0) + ((Number(med.looseQty) || 0) / (Number(med.packSize) || 1))) <= 0 ? (
                           <span className="text-red-600 font-bold">Stock unavailable</span>
                         ) : (
-                          <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600 font-semibold"}`}>
-                            Stock: {med.quantity}
+                          <span className={`${((Number(med.quantity) || 0) + ((Number(med.looseQty) || 0) / (Number(med.packSize) || 1))) < 10 ? "text-orange-600 font-bold" : "text-green-600 font-semibold"}`}>
+                            Stock: {((Number(med.quantity) || 0) + ((Number(med.looseQty) || 0) / (Number(med.packSize) || 1))).toFixed(2)} packs
                           </span>
                         )}
                         <span>| Batch: {med.batchNumber}</span>
