@@ -11,6 +11,12 @@ const defaultSellingPrice = (mrp, packSize = 1) => {
   const size = Number(packSize) || 1;
   return Number.isFinite(value) && value > 0 ? (value / size * 0.9).toFixed(2) : '';
 };
+const normalizePacking = (packing, packSize = 1, stripsPerBox = 1) => {
+  const numbers = String(packing || '').match(/\d+(?:\.\d+)?/g)?.map(Number).filter(n => Number.isFinite(n) && n > 0) || [];
+  const tabs = numbers.length >= 2 ? numbers[1] : (numbers[0] || packSize);
+  const strips = numbers.length >= 2 ? numbers[0] : stripsPerBox;
+  return Number(strips) > 1 ? `${Math.round(strips)}x${Math.round(tabs)} TAB` : `${Math.round(tabs)} TAB`;
+};
 
 const PurchaseBillHistory = () => {
   const [bills, setBills] = useState([]);
@@ -424,7 +430,7 @@ const PurchaseBillHistory = () => {
                               <tbody className="divide-y divide-slate-100">
                                 {(bill.items || []).map((item, i) => (
                                   <tr key={i}>
-                                    <td className="px-3 py-2 font-bold text-slate-800">{item.productName}{item.packing ? <span className="text-slate-400 font-medium"> ({item.packing})</span> : ''}</td>
+                                    <td className="px-3 py-2 font-bold text-slate-800">{item.productName}<span className="text-slate-400 font-medium"> ({normalizePacking(item.packing, item.packSize, item.stripsPerBox)})</span></td>
                                     <td className="px-3 py-2">{item.hsnCode || '-'}</td>
                                     <td className="px-3 py-2">{item.batchNumber || '-'}</td>
                                     <td className="px-3 py-2 whitespace-nowrap">{dateFmt(item.expiryDate)}</td>

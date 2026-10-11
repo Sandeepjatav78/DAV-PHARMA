@@ -21,6 +21,16 @@ const parsePacking = (packing, fallbackTabletsPerStrip = 1, fallbackStripsPerBox
   return { tabletsPerStrip: Math.max(1, Math.round(numbers[0])), stripsPerBox: 1 };
 };
 
+const normalizePacking = (packing, fallbackTabletsPerStrip = 1, fallbackStripsPerBox = 1) => {
+  const parsed = parsePacking(packing, fallbackTabletsPerStrip, fallbackStripsPerBox);
+  const raw = String(packing || '').trim();
+  const numbers = raw.match(/\d+(?:\.\d+)?/g)?.map(Number).filter((value) => Number.isFinite(value) && value > 0) || [];
+  if (numbers.length >= 2 || parsed.stripsPerBox > 1) {
+    return `${parsed.stripsPerBox}x${parsed.tabletsPerStrip} TAB`;
+  }
+  return `${parsed.tabletsPerStrip} TAB`;
+};
+
 const parsePackSize = (packing, fallback = 1) => parsePacking(packing, fallback).tabletsPerStrip;
 
 const getTotalUnits = (medicine) => {
@@ -52,6 +62,7 @@ const getRequestedUnits = (item, packSize) => {
 module.exports = {
   parsePackSize,
   parsePacking,
+  normalizePacking,
   getTotalUnits,
   setStockFromUnits,
   addStock,

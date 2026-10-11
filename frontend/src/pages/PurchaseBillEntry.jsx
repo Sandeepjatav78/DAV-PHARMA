@@ -10,6 +10,13 @@ const tabletsPerStrip = (packing, fallback = 1) => {
   const single = text.match(/(\d+(?:\.\d+)?)\s*(?:tab|tablet| गोली)/i);
   return single ? Number(single[1]) || fallback : fallback;
 };
+const normalizePacking = (packing, fallbackPackSize = 1, fallbackStrips = 1) => {
+  const text = String(packing || '').trim();
+  const numbers = text.match(/\d+(?:\.\d+)?/g)?.map(Number).filter(n => Number.isFinite(n) && n > 0) || [];
+  const packSize = numbers.length >= 2 ? numbers[1] : (numbers[0] || fallbackPackSize);
+  const strips = numbers.length >= 2 ? numbers[0] : fallbackStrips;
+  return Number(strips) > 1 ? `${Math.round(strips)}x${Math.round(packSize)} TAB` : `${Math.round(packSize)} TAB`;
+};
 const defaultSellingPrice = (mrp, packing, packSize) => {
   const value = Number(mrp);
   const size = Number(packSize) || tabletsPerStrip(packing);
@@ -162,7 +169,7 @@ const PurchaseBillEntry = () => {
         if (Array.isArray(extracted.items) && extracted.items.length > 0) {
           const scannedItems = extracted.items.map(item => ({
             productName: item.productName || '',
-            packing: item.packing || '',
+            packing: normalizePacking(item.packing, 1, 1),
             batchNumber: item.batchNumber || '',
             manufacturer: item.manufacturer || '',
             hsnCode: item.hsnCode || '',
@@ -486,16 +493,16 @@ const PurchaseBillEntry = () => {
                 return {
                   ...it,
                   productName: med.productName || it.productName,
-                  packing: med.packSize ? `${med.packSize} TAB` : (it.packing || ''),
+                  packing: normalizePacking(med.packing, med.packSize || 1, med.stripsPerBox || 1),
                   manufacturer: med.manufacturer || it.manufacturer,
                   hsnCode: med.hsnCode || it.hsnCode,
                   gst: med.gst != null ? String(med.gst) : it.gst,
                   mrp: med.mrp != null ? String(med.mrp) : it.mrp,
-                  sellingPrice: it.sellingPrice || defaultSellingPrice(med.mrp, `${med.packSize || 1} TAB`, med.packSize)
+                  sellingPrice: it.sellingPrice || defaultSellingPrice(med.mrp, normalizePacking(med.packing, med.packSize || 1, med.stripsPerBox || 1), med.packSize)
                 };
               }))}
             /></td>
-            <td className="p-2"><input value={item.packing} onChange={e => setItem(index, 'packing', e.target.value)} placeholder="10 tab" className={inputClass} /></td>
+            <td className="p-2"><input value={item.packing} onChange={e => setItem(index, 'packing', e.target.value)} onBlur={() => setItem(index, 'packing', normalizePacking(item.packing))} placeholder="10 TAB / 10x10 TAB" className={inputClass} /></td>
             <td className="p-2"><input id={`field-row${index}-batchNumber`} value={item.batchNumber} onChange={e => setItem(index, 'batchNumber', e.target.value)} placeholder="Batch" className={fieldClass(`row${index}.batchNumber`)} /></td>
             <td className="p-2"><input value={item.manufacturer} onChange={e => setItem(index, 'manufacturer', e.target.value)} placeholder="Mfr" className={inputClass} /></td>
             <td className="p-2"><input value={item.hsnCode} onChange={e => setItem(index, 'hsnCode', e.target.value)} placeholder="3004" className={inputClass} /></td>

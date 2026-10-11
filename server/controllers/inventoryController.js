@@ -7,7 +7,7 @@ const PurchaseBill = require('../models/PurchaseBill');
 const Supplier = require('../models/Supplier');
 const cloudinary = require('cloudinary').v2;
 const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES, SCHEDULE_INFO } = require('../utils/scheduleDetector');
-const { parsePacking, addStock, getTotalUnits, setStockFromUnits } = require('../utils/stockUnits');
+const { parsePacking, normalizePacking, addStock, getTotalUnits, setStockFromUnits } = require('../utils/stockUnits');
 
 // --- SHARED HELPERS (supplier matching / ledger) ---
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -849,7 +849,7 @@ const createPurchaseBill = async (req, res) => {
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
       const taxableAmount = gross - discountAmount;
-      return { productName, packing: String(item.packing || '').trim(), packSize, stripsPerBox, batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, sellingPricePerTablet, discount, gst, gross, discountAmount, taxableAmount };
+      return { productName, packing: normalizePacking(item.packing, packSize, stripsPerBox), packSize, stripsPerBox, batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, sellingPricePerTablet, discount, gst, gross, discountAmount, taxableAmount };
     });
 
     const subtotal = preItems.reduce((sum, item) => sum + item.gross, 0);
@@ -999,7 +999,7 @@ const updatePurchaseBill = async (req, res) => {
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
       const taxableAmount = gross - discountAmount;
-      return { productName, packing: String(item.packing || '').trim(), packSize, stripsPerBox, batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, sellingPricePerTablet, discount, gst, gross, discountAmount, taxableAmount };
+      return { productName, packing: normalizePacking(item.packing, packSize, stripsPerBox), packSize, stripsPerBox, batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, sellingPricePerTablet, discount, gst, gross, discountAmount, taxableAmount };
     });
 
     const subtotal = preItems.reduce((sum, item) => sum + item.gross, 0);
