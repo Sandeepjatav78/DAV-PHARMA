@@ -21,7 +21,7 @@ export default function PurchaseReturn() {
   };
   useEffect(() => {
     const role = localStorage.getItem('userRole');
-    if (role !== 'staff') navigate('/');
+    if (role !== 'admin') navigate('/login', { replace: true });
     else load();
   }, [navigate]);
 

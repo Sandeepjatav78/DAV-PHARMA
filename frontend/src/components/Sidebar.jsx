@@ -5,8 +5,7 @@ const Sidebar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   
-  // Get User Role
-  const userRole = localStorage.getItem('userRole'); // 'admin' or 'staff'
+  const userRole = localStorage.getItem('userRole');
 
   const handleLogout = () => {
     if(window.confirm("Are you sure you want to Logout?")) {
@@ -46,70 +45,47 @@ const Sidebar = () => {
       <div className="flex-1 flex items-center justify-center overflow-x-auto no-scrollbar mx-4">
         <ul className="flex items-center gap-1">
             
-            {/* Inventory link for admin and staff */}
-            {(userRole === 'admin' || userRole === 'staff') && (
-                <li>
-                    <Link to="/" className={getLinkClass('/')}>📦 Inventory</Link>
-                </li>
-            )}
+            <li>
+                <Link to="/" className={getLinkClass('/')}>📦 Inventory</Link>
+            </li>
 
-            {/* Staff & Admin Links */}
-            {userRole === 'admin' && (
-                <li>
-                    <Link to="/sales" className={getLinkClass('/sales')}>💰 Sale</Link>
-                </li>
-            )}
+            <li>
+                <Link to="/sales" className={getLinkClass('/sales')}>💰 Sale</Link>
+            </li>
             
             <li>
                 <Link to="/manual" className={getLinkClass('/manual')}>📝 Bill</Link>
             </li>
 
-            {userRole === 'admin' && (
-                <li>
-                    <Link to="/kachi-entry" className={getLinkClass('/kachi-entry')}>🧾 Kachi Entry</Link>
-                </li>
-            )}
+            <li>
+                <Link to="/kachi-entry" className={getLinkClass('/kachi-entry')}>🧾 Kachi Entry</Link>
+            </li>
 
-            {userRole === 'admin' && (
-                <li>
-                    <Link to="/purchase-bill" className={getLinkClass('/purchase-bill')}>📥 Purchase Bill</Link>
-                </li>
-            )}
+            <li>
+                <Link to="/purchase-bill" className={getLinkClass('/purchase-bill')}>📥 Purchase Bill</Link>
+            </li>
 
-            {userRole === 'admin' && (
-                <li>
-                    <Link to="/purchase-bill-history" className={getLinkClass('/purchase-bill-history')}>🗂 Bill History</Link>
-                </li>
-            )}
+            <li>
+                <Link to="/purchase-bill-history" className={getLinkClass('/purchase-bill-history')}>🗂 Bill History</Link>
+            </li>
 
-            {userRole === 'admin' && (
-                <li>
-                    <Link to="/supplier-ledger" className={getLinkClass('/supplier-ledger')}>📖 Party Ledger</Link>
-                </li>
-            )}
+            <li>
+                <Link to="/supplier-ledger" className={getLinkClass('/supplier-ledger')}>📖 Party Ledger</Link>
+            </li>
 
             <li>
                 <Link to="/reports" className={getLinkClass('/reports')}>📊 Reports</Link>
             </li>
 
-            {/* Admin Only Link: Credit Ledger */}
-            {userRole === 'admin' && (
-                <li>
-                    <Link to="/credits" className={getLinkClass('/credits')}>💳 Credit</Link>
-                </li>
-            )}
-            {userRole === 'staff' && (
-                <li>
-                    <Link to="/purchase-returns" className={getLinkClass('/purchase-returns')}>↩️ Purchase Return</Link>
-                </li>
-            )}
-
-            {/* Schedule Drug (G/H/H1/X) Ledger: staff-only (their own billing register) */}
-            {userRole === 'staff' && (
-                <li>
-                    <Link to="/schedule-ledger" className={getLinkClass('/schedule-ledger')}>💊 Schedule Ledger</Link>
-                </li>
-            )}
+            <li>
+                <Link to="/credits" className={getLinkClass('/credits')}>💳 Credit</Link>
+            </li>
+            <li>
+                <Link to="/purchase-returns" className={getLinkClass('/purchase-returns')}>↩️ Purchase Return</Link>
+            </li>
+            <li>
+                <Link to="/schedule-ledger" className={getLinkClass('/schedule-ledger')}>💊 Schedule Ledger</Link>
+            </li>
 
         </ul>
       </div>

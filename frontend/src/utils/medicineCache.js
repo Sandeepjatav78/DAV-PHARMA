@@ -56,7 +56,6 @@ export const isMedicinesCacheFresh = () => {
 export const filterMedicinesFromCache = (items, query, options = {}) => {
   const {
     includeOutOfStock = false,
-    userRole = 'staff',
     searchPartyName = false,
   } = options;
 
@@ -64,18 +63,10 @@ export const filterMedicinesFromCache = (items, query, options = {}) => {
   if (!normalizedQuery) return [];
 
   return (Array.isArray(items) ? items : []).filter((med) => {
-    if (userRole === 'staff' && med.isKachiEntry) {
-      return false;
-    }
-
     if (!includeOutOfStock) {
       const quantity = Number(med.quantity || 0);
       const looseQty = Number(med.looseQty || 0);
       if (quantity <= 0 && looseQty <= 0) return false;
-    }
-
-    if (userRole === 'staff' && !normalizeText(med.hsnCode)) {
-      return false;
     }
 
     const haystackParts = [med.productName, med.batchNumber, med.hsnCode];

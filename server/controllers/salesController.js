@@ -118,7 +118,6 @@ exports.getCustomerLastPrices = async (req, res) => {
 exports.createSale = async (req, res) => {
   try {
     const { items, customerDetails, totalAmount, paymentMode, isBillRequired, invoiceNo, customDate, isCredit, creditNotes } = req.body;
-    const userRole = req.user?.role || 'staff';
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "No sale items provided" });
@@ -190,19 +189,6 @@ exports.createSale = async (req, res) => {
       };
     });
 
-    if (userRole === 'staff') {
-      const itemWithoutHsn = sanitizedItems.find((item) => {
-        const isDoseLine = String(item?.name || '').trim() === 'Medical/Dose Charge';
-        return !isDoseLine && !item.hsn;
-      });
-
-      if (itemWithoutHsn) {
-        return res.status(400).json({
-          message: `HSN is required for item: ${itemWithoutHsn.name || 'Unknown Item'}`
-        });
-      }
-    }
-
     let finalInvoiceNo = invoiceNo; // Gets value if Manual Bill sends it
 
     // --- 🔥 INVOICE GENERATION LOGIC ---
@@ -272,12 +258,6 @@ exports.createSale = async (req, res) => {
 
       // NOTE: selling before the purchase date is intentionally allowed now —
       // the purchase invoice number is captured above for traceability.
-
-      if (userRole === 'staff' && med.isKachiEntry) {
-        return res.status(403).json({
-          message: `Staff cannot bill Kachi entry item: ${med.productName}`
-        });
-      }
 
       const currentQty = med.quantity || 0; // Stored in strips (can be decimal)
       const requestedQty = Number(item.quantity) || 0; // Also in strips
@@ -436,14 +416,7 @@ exports.getAllSales = async (req, res) => {
   try {
     const { start, end, search, paymentMode } = req.query; 
     const conditions = [];
-    const userRole = req.user?.role || 'staff';
     const normalizedPaymentMode = String(paymentMode || '').trim().toLowerCase();
-
-    // --- 🔥 ROLE-BASED VISIBILITY ---
-    // If staff, only show their own sales
-    if (userRole === 'staff') {
-      conditions.push({ createdBy: 'staff' });
-    }
 
     // --- 🔥 GLOBAL SEARCH LOGIC ---
     if (search) {
@@ -506,14 +479,7 @@ exports.getAllSales = async (req, res) => {
 exports.getScheduleLedger = async (req, res) => {
   try {
     const { start, end, search, category } = req.query;
-    const userRole = req.user?.role || 'staff';
     const conditions = [{ hasScheduleDrug: true }];
-
-    // Same rule as the main sales report: staff only see bills billed as staff,
-    // never admin's bills mixed in.
-    if (userRole === 'staff') {
-      conditions.push({ createdBy: 'staff' });
-    }
 
     if (search) {
       conditions.push({
@@ -677,8 +643,6 @@ exports.returnSaleItems = async (req, res) => {
   try {
     const { id } = req.params;
     const { items } = req.body;
-    const userRole = req.user?.role || 'staff';
-
     const originalSale = await Sale.findById(id);
     if (!originalSale) {
       return res.status(404).json({ message: "Sale not found" });

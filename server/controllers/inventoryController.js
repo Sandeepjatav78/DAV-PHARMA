@@ -107,15 +107,12 @@ const backgroundAutoTagSchedule = async () => {
 // 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
   try {
-    const userRole = req.user?.role || 'staff';
-    const query = userRole === 'admin'
-      ? {
-          $or: [
-            { isKachiEntry: { $ne: true } },
-            { isKachiEntry: true, canShowInAdminInventory: true }
-          ]
-        }
-      : { isKachiEntry: { $ne: true } };
+    const query = {
+      $or: [
+        { isKachiEntry: { $ne: true } },
+        { isKachiEntry: true, canShowInAdminInventory: true }
+      ]
+    };
 
     await backgroundAutoTagSchedule();
 
@@ -143,7 +140,6 @@ const getSuppliers = async (_req, res) => {
 // 2. SEARCH MEDICINES
 const searchMedicines = async (req, res) => {
   const { q, includeOutOfStock } = req.query;
-  const userRole = req.user?.role || 'staff';
   if (!q) return res.json([]);
   try {
     // By default, keep suggestions sale-safe by hiding out-of-stock medicines.
@@ -165,13 +161,6 @@ const searchMedicines = async (req, res) => {
           { quantity: { $gt: 0 } },
           { looseQty: { $gt: 0 } }
         ]
-      });
-    }
-
-    if (userRole === 'staff') {
-      filters.push({ isKachiEntry: { $ne: true } });
-      filters.push({
-        hsnCode: { $exists: true, $nin: [null, ''] }
       });
     }
 
@@ -518,7 +507,6 @@ const getKachiEntries = async (req, res) => {
 // 6. EXPIRY ALERTS
 const getExpiringMedicines = async (req, res) => {
   try {
-    const userRole = req.user?.role || 'staff';
     const today = new Date();
     const futureDate = new Date();
 

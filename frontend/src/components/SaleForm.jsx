@@ -89,7 +89,7 @@ const SaleForm = () => {
   const [doseAmount, setDoseAmount] = useState(() => getSavedState("doseAmount", ""));
 
   const userRole = localStorage.getItem("userRole");
-  const isStaff = userRole === "staff";
+  const isStaff = false;
 
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [lastSale, setLastSale] = useState(null);

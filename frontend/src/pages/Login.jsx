@@ -18,15 +18,9 @@ const Login = () => {
 
       if (res.data.success) {
         localStorage.setItem("token", res.data.token);
-        localStorage.setItem("userRole", res.data.role);
-
-        if (res.data.role === "admin") {
-          alert("Admin Login Successful! Redirecting to Inventory...");
-          navigate("/");
-        } else {
-          alert("Staff Login Successful! Redirecting to Billing...");
-          navigate("/sales");
-        }
+        localStorage.setItem("userRole", "admin");
+        alert("Admin Login Successful! Redirecting to Inventory...");
+        navigate("/");
       } else {
         setError("❌ Wrong Password");
       }

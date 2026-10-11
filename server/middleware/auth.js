@@ -14,6 +14,11 @@ const authenticateToken = (req, res, next) => {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
 
+    // Staff sessions are no longer supported. This also invalidates old staff tokens.
+    if (decoded.role !== 'admin') {
+      return res.status(401).json({ message: 'Unauthorized: admin access required' });
+    }
+
     // Check version matching for automatic deployment invalidation
     const currentDeployVersion = getDeployVersion();
     if (decoded.version && decoded.version !== currentDeployVersion) {
@@ -24,7 +29,7 @@ const authenticateToken = (req, res, next) => {
     }
 
     req.user = {
-      role: decoded.role || 'staff',
+      role: 'admin',
       version: decoded.version
     };
     return next();

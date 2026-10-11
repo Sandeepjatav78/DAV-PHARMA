@@ -21,8 +21,8 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    if (userRole !== "admin" && userRole !== "staff") {
-      navigate("/sales");
+    if (userRole !== "admin") {
+      navigate("/login");
       return;
     }
 

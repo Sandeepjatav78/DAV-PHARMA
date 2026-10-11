@@ -148,10 +148,6 @@ const ManualBill = () => {
   };
 
   const handleSelectMedicine = (med) => {
-      if (currentUserRole === 'staff' && !String(med.hsnCode || '').trim()) {
-          return alert("❌ This product has no HSN. Staff cannot bill it.");
-      }
-
       // Check purchase date restriction against chosen bill date
       const pDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
       if (pDate) {
@@ -186,10 +182,6 @@ const ManualBill = () => {
     if (!currentItem.name || !currentItem.price || !currentItem.quantity) {
       return alert("Please fill Name, Price and Quantity");
     }
-
-        if (currentUserRole === 'staff' && !String(currentItem.hsn || '').trim()) {
-            return alert("HSN is required for staff billing.");
-        }
 
     let rowTotal = parseFloat(currentItem.price) * parseFloat(currentItem.quantity);
     if(currentItem.unit === 'loose') {
@@ -240,11 +232,6 @@ const ManualBill = () => {
   const handleGenerateBill = async () => {
     if (cart.length === 0) return alert("Add items first!");
     if (!customer.name) return alert("Customer Name is required!");
-
-        if (currentUserRole === 'staff') {
-                const invalidItem = cart.find((item) => !String(item.hsn || '').trim());
-                if (invalidItem) return alert(`❌ HSN missing for item: ${invalidItem.name}`);
-        }
 
         const billTime24 = /^\d{2}:\d{2}$/.test(String(billTime || '')) ? billTime : formatTime24Hour(new Date());
         if (billTime24 !== billTime) {

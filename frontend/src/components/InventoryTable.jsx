@@ -23,26 +23,11 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
     });
   }, []);
 
-  const hasCompleteInventoryData = (med) => {
-      const requiredFields = [
-          med.productName,
-          med.batchNumber,
-          med.hsnCode,
-          med.expiryDate,
-          med.mrp,
-          med.sellingPrice,
-          med.costPrice,
-          med.packSize,
-      ];
-
-      return requiredFields.every((value) => String(value ?? '').trim()) && (Number(med.quantity || 0) > 0 || Number(med.looseQty || 0) > 0);
-  };
-
     // --- FILTER LOGIC ---
     const filteredMeds = meds
         .filter(m => {
             if (m.isKachiEntry) {
-                return userRole !== 'staff' && Boolean(m.canShowInAdminInventory);
+                return Boolean(m.canShowInAdminInventory);
             }
 
             const baseQty = m.quantity || 0; // may be decimal (packs + loose)
@@ -50,8 +35,6 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
             const stockAvailable = baseQty > 0 || loose > 0; // hide fully out-of-stock items
             if (!stockAvailable) return false;
             if (stockFilter === 'loose' && loose <= 0) return false;
-            if (userRole === 'staff' && !hasCompleteInventoryData(m)) return false;
-
             // Expiry filter (future date cutoff)
             if (expiryFilter) {
                 const targetExp = new Date(`${expiryFilter}T23:59:59`);
@@ -68,8 +51,8 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
 
             return true;
         })
-        .filter(m => 
-            m.productName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        .filter(m =>
+            m.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (m.partyName && m.partyName.toLowerCase().includes(searchTerm.toLowerCase())) ||
             m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (m.hsnCode && m.hsnCode.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -89,7 +72,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
             "Party Name": m.partyName || '-',
             "Packing": packSize,
             "Qty (Sealed Strips)": strips,
-            "Loose (Open Tabs)": loose, 
+            "Loose (Open Tabs)": loose,
             "MRP": m.mrp,
             "Selling Price": m.sellingPrice,
             "Doctor Price": m.doctorPrice ?? '-',
@@ -107,9 +90,9 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
 
   // --- SIMPLE PASSWORD FOR CP VIEW ---
     const handleToggleCP = async () => {
-        if (showCP) { 
-                setShowCP(false); 
-                return; 
+        if (showCP) {
+                setShowCP(false);
+                return;
         }
         const code = prompt("🔒 Enter Admin Secret for CP / Party view:");
         if (!code) return;
@@ -130,12 +113,12 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
   // --- DELETE ITEM ---
   const handleDeleteClick = async (id) => {
     if(!window.confirm("⚠️ Are you sure you want to delete this medicine permanently?")) return;
-    
+
         const code = prompt("🧨 Enter Admin Secret to DELETE:");
         if (!code) return;
     try {
                 const res = await api.post('/admin/secret', { code });
-                if (res.data.success) { onDelete(id); } 
+                if (res.data.success) { onDelete(id); }
                 else { alert("❌ Wrong Secret! Delete Cancelled."); }
     } catch (error) {
         console.error(error);
@@ -144,20 +127,20 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
   };
 
   // --- EDIT HANDLERS ---
-  const handleEditClick = (med) => { 
-      setEditId(med._id); 
-      setEditFormData({ 
-          ...med, 
-          packSize: med.packSize || '', 
+  const handleEditClick = (med) => {
+      setEditId(med._id);
+      setEditFormData({
+          ...med,
+          packSize: med.packSize || '',
           quantity: med.quantity || 0,
           doctorPrice: med.doctorPrice ?? '',
           gst: med.gst || 0
-      }); 
+      });
       setNewBillFile(null);
   };
 
-  const handleEditFormChange = (e) => { 
-      setEditFormData({ ...editFormData, [e.target.name]: e.target.value }); 
+  const handleEditFormChange = (e) => {
+      setEditFormData({ ...editFormData, [e.target.name]: e.target.value });
   };
 
   const handleEditFileChange = (e) => {
@@ -229,7 +212,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-      
+
       {/* --- HEADER: Search & Filters --- */}
       <div className="p-4 bg-gray-50 border-b border-gray-200 space-y-3">
          <div className="flex flex-wrap items-center justify-between gap-4">
@@ -238,8 +221,8 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     📦 Stock List <span className="text-gray-500 text-sm font-normal">({filteredMeds.length})</span>
                 </h3>
                 <div className="relative w-full max-w-xs">
-                    <input  
-                        placeholder=" Search Name, Party or Batch..." 
+                    <input
+                        placeholder=" Search Name, Party or Batch..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
@@ -251,7 +234,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     <button onClick={() => setStockFilter('loose')} className={`px-3 py-2 ${stockFilter === 'loose' ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>Loose only</button>
                 </div>
             </div>
-            
+
             <div className="flex gap-3">
                 {userRole === 'admin' && onAutoDetectSchedule && (
                     <button
@@ -266,8 +249,8 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                 <button onClick={handleExport} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2">
                     📊 Export Excel
                 </button>
-                <button 
-                    onClick={handleToggleCP} 
+                <button
+                    onClick={handleToggleCP}
                     className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2 ${showCP ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-600 hover:bg-gray-700 text-white'}`}
                     title="Unlock / Hide CP & Party Details"
                 >
@@ -328,7 +311,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                 <tr>
                     <th className={thClass}>Name</th>
                     <th className={`${thClass} text-center`}>Qty (Strips)</th>
-                    <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
+                    <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th>
                     <th className={thClass}>Batch</th>
                     <th className={thClass}>HSN</th>
                     <th className={thClass}>Party</th>
@@ -407,7 +390,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                             </span>
                         </div>
                     </td>
-                    
+
                     <td className={`${tdClass} text-center font-bold text-orange-600 bg-orange-50`}>
                         {m.isKachiEntry ? '-' : looseTablets}
                     </td>
@@ -432,9 +415,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     <td className={tdClass}>
                         <div className="flex gap-2 justify-center">
                             <button onClick={() => handleEditClick(m)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit Item (Password Required)">✏️</button>
-                            {userRole !== 'staff' && (
-                                <button onClick={() => handleDeleteClick(m._id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors" title="Delete Item">🗑️</button>
-                            )}
+                            <button onClick={() => handleDeleteClick(m._id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors" title="Delete Item">🗑️</button>
                         </div>
                     </td>
                     </>
@@ -443,7 +424,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
             )})}
             </tbody>
         </table>
-        
+
         {filteredMeds.length === 0 && (
             <div className="p-8 text-center text-gray-400 italic bg-gray-50 border-t border-gray-100">
                 No medicines found matching selected filters.

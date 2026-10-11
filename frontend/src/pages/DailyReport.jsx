@@ -119,10 +119,7 @@ const DailyReport = () => {
         return alert("No data found to export!");
     }
 
-    const transactionsForExport = report.transactions.filter((sale) => {
-        if (userRole === 'staff') return sale.createdBy === 'staff';
-        return true;
-    });
+    const transactionsForExport = report.transactions;
 
     if (transactionsForExport.length === 0) {
         return alert("No data found to export!");
@@ -222,7 +219,7 @@ const DailyReport = () => {
         phone: t.customerDetails?.phone || '', 
         doctor: t.customerDetails?.doctor || 'Self', 
         mode: t.paymentMode, 
-        isDuplicate: userRole !== 'staff',
+        isDuplicate: true,
         grandTotal: t.totalAmount, 
         doseAmount: doseAmount, 
         customDate: saleDate.toISOString().split('T')[0], 
@@ -263,14 +260,6 @@ const DailyReport = () => {
   // Sort by Date (Newest First)
   filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  // Admin and Staff filter for table display
-  // Use a localized userRole check to be safe
-  const currentRole = localStorage.getItem('userRole');
-
-  if (currentRole === 'staff') {
-    filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
-  }
-
     // Keep cards in sync with exactly what table shows.
     const finalTotal = filteredTransactions.reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
     const finalCash = filteredTransactions
@@ -280,22 +269,13 @@ const DailyReport = () => {
         .filter((t) => isOnlinePayment(t.paymentMode))
         .reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
 
-    const staffTxns = filteredTransactions.filter((t) => t.createdBy === 'staff');
-    const staffTotal = staffTxns.reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-    const staffCash = staffTxns
-        .filter((t) => isCashPayment(t.paymentMode))
-        .reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-    const staffOnline = staffTxns
-        .filter((t) => isOnlinePayment(t.paymentMode))
-        .reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-
   if (!report) return <div className="text-center p-10 text-gray-500 font-medium">Loading...</div>;
 
   return (
     <div className="p-4 md:p-6 bg-gray-50 min-h-screen">
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <h2 className="text-2xl font-bold text-gray-800">
-            📊 Sales Report {userRole === 'staff' && <span className="text-sm font-medium text-gray-500">(My Sales Only)</span>}
+            📊 Sales Report
         </h2>
         
         <div className="flex flex-wrap items-center gap-2 bg-white px-2 py-1 rounded border shadow-sm">
@@ -321,14 +301,14 @@ const DailyReport = () => {
                 <option value="credit">Credit</option>
             </select>
             
-            {(userRole === 'admin' || userRole === 'staff') && (
+            <div>
                 <button 
                     onClick={handleExportGST} 
                     className="ml-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-1"
                 >
-                    📑 {userRole === 'staff' ? 'Export My GST Excel' : 'Export GST Excel'}
+                    📑 Export GST Excel
                 </button>
-            )}
+            </div>
         </div>
       </div>
 
@@ -341,10 +321,9 @@ const DailyReport = () => {
       {/* STATS CARDS */}
       <div className="grid gap-4 mb-6 grid-cols-1 md:grid-cols-3">
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-green-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">{userRole === 'admin' ? 'Total Revenue' : 'My Total Revenue'}</h4>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">Total Revenue</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
                 <h1 className="text-2xl font-bold text-gray-800">₹{Number(finalTotal).toFixed(0)}</h1>
-                {userRole === 'admin' && staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{Number(staffTotal).toFixed(0)})</span>}
             </div>
             <div className="text-green-600 text-xs font-bold mt-1">{filteredTransactions.length} Bills Found</div>
         </div>
@@ -352,14 +331,12 @@ const DailyReport = () => {
             <h4 className="text-gray-500 text-xs font-bold uppercase">Cash</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
                 <h1 className="text-2xl font-bold text-orange-600">₹{Number(finalCash).toFixed(0)}</h1>
-                {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{Number(staffCash).toFixed(0)})</span>}
             </div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-blue-500">
             <h4 className="text-gray-500 text-xs font-bold uppercase">Online</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
                 <h1 className="text-2xl font-bold text-blue-600">₹{Number(finalOnline).toFixed(0)}</h1>
-                {userRole === 'admin' && staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{Number(staffOnline).toFixed(0)})</span>}
             </div>
         </div>
       </div>
@@ -377,7 +354,6 @@ const DailyReport = () => {
                         const isDose = t.invoiceNo.startsWith('DOSE');
                         const isManual = t.invoiceNo.startsWith('MAN');
                         const isReturn = t.invoiceNo.startsWith('RET');
-                        const isStaffBill = t.createdBy === 'staff';
                         const paymentTag = getPaymentTagConfig(t.paymentMode);
                         
                         const medicineNames = t.items
@@ -401,7 +377,6 @@ const DailyReport = () => {
                             <td className="px-4 py-3">
                                 <div className="text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
                                                                         {t.invoiceNo}
-                                    {userRole === 'admin' && isStaffBill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200 uppercase font-bold tracking-wider">STAFF</span>}
                                                                         {isReturn && (
                                                                             <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded border border-rose-200 uppercase font-bold tracking-wider">
                                                                                 RETURN
