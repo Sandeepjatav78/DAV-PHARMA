@@ -1,0 +1,987 @@
+import React, { useState, useEffect, useRef } from "react";
+import api from "../api/axios";
+import { generateBillHTML } from "../utils/BillGenerator";
+import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from "../utils/medicineCache";
+
+/* eslint-disable react-hooks/set-state-in-effect */
+
+// --- EXPIRY & COST-PRICE HELPERS ---
+const getExpiryInfo = (expiryDate) => {
+  if (!expiryDate) return null;
+  const d = new Date(expiryDate);
+  if (isNaN(d.getTime())) return null;
+  const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+  const now = new Date();
+  return { date: d, endOfMonth, isExpired: now > endOfMonth, daysLeft: Math.floor((endOfMonth - now) / 86400000) };
+};
+
+const formatExpiryShort = (v) => {
+  if (!v) return "-";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+};
+
+// True when stock is not yet expired but its expiry month ends within `withinDays`.
+const isExpiringSoon = (v, withinDays = 90) => {
+  const info = getExpiryInfo(v);
+  if (!info || info.isExpired) return false;
+  return info.daysLeft <= withinDays;
+};
+
+const formatDateFull = (v) => {
+  if (!v) return "-";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
+
+// Opens a small read-only window showing the cost price details of an item (#6).
+const openCostPriceWindow = (item) => {
+  const w = window.open("", "_blank", "width=400,height=500");
+  if (!w) return alert("Popup blocked! Allow popups to view cost details.");
+  const safeName = String(item.name || "Item").replace(/</g, "&lt;");
+  const rows = [
+    ["Cost Price (CP)", `₹${Number(item.costPrice || 0).toFixed(2)}`, "#b91c1c"],
+    ["Selling Price", `₹${Number(item.price || item.sellingPrice || 0).toFixed(2)}`, "#0f766e"],
+    ["MRP", `₹${Number(item.mrp || 0).toFixed(2)}`, ""],
+    ["Discount", `${Number(item.discount || 0).toFixed(2)}%`, ""],
+    ["GST", `${Number(item.gst || 0)}%`, ""],
+    ["Stock Available", `${Number(item.maxStock ?? item.quantity ?? 0)} packs`, ""],
+    ["Purchase Invoice", String(item.purchaseInvoiceNo || "-"), ""],
+    ["Party / Supplier", String(item.partyName || "-"), ""]
+  ];
+  const tableHTML = rows
+    .map(([k, v, color]) => `<tr><td style="padding:7px 4px; border-bottom:1px solid #f3f4f6; color:#374151;">${k}</td><td style="padding:7px 4px; border-bottom:1px solid #f3f4f6; text-align:right; font-weight:bold; color:${color || "#111827"};">${v}</td></tr>`)
+    .join("");
+  w.document.write(`<html><head><title>Cost Details</title></head><body style="background:#f9fafb; margin:0;">
+    <div style="font-family: Arial, sans-serif; max-width: 360px; margin: 24px auto; padding: 22px; border: 2px solid #e5e7eb; border-radius: 12px; background:#fff;">
+      <h2 style="margin:0 0 4px; font-size:16px; color:#0f766e;">${safeName}</h2>
+      <div style="font-size:12px; color:#6b7280; margin-bottom:14px;">Batch: ${String(item.batch || "-")} &nbsp;|&nbsp; Exp: ${formatDateFull(item.expiry || item.expiryDate)}</div>
+      <table style="width:100%; font-size:13px; border-collapse:collapse;">${tableHTML}</table>
+      <div style="margin-top:14px; font-size:11px; color:#9ca3af; text-align:center;">Cost details are for pharmacy reference only.</div>
+    </div></body></html>`);
+  w.document.close();
+};
+
+const SaleForm = () => {
+  const getSavedState = (key, defaultValue) => {
+    try {
+      const saved = localStorage.getItem("draft_sale_v3");
+      return saved ? JSON.parse(saved)[key] || defaultValue : defaultValue;
+    } catch { return defaultValue; }
+  };
+
+  // --- REFS ---
+  const searchInputRef = useRef(null);
+  const resultListRef = useRef(null); // Ref for the suggestion container
+  const customerSuggestionLockRef = useRef(false);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [cart, setCart] = useState(() => getSavedState("cart", []));
+  const [paymentMode, setPaymentMode] = useState(() => getSavedState("paymentMode", "Cash"));
+  const [isCredit, setIsCredit] = useState(() => getSavedState("isCredit", false));
+  const [creditNotes, setCreditNotes] = useState(() => getSavedState("creditNotes", ""));
+  const [amountGiven, setAmountGiven] = useState(() => getSavedState("amountGiven", ""));
+  const [changeToReturn, setChangeToReturn] = useState(0);
+  const [isBillNeeded, setIsBillNeeded] = useState(() => getSavedState("isBillNeeded", true));
+  const [customer, setCustomer] = useState(() => getSavedState("customer", { name: "", phone: "", doctor: "" }));
+  const [invoiceNo, setInvoiceNo] = useState("Loading...");
+  const [doseAmount, setDoseAmount] = useState(() => getSavedState("doseAmount", ""));
+
+  const userRole = localStorage.getItem("userRole");
+  const isStaff = userRole === "staff";
+
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [lastSale, setLastSale] = useState(null);
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
+  const [focusedCustomerIndex, setFocusedCustomerIndex] = useState(-1);
+  const [customerFocusField, setCustomerFocusField] = useState("name");
+  const [inventory, setInventory] = useState(() => getCachedMedicines());
+  const [customerPriceHistory, setCustomerPriceHistory] = useState({});
+
+  // --- SUGGESTION TOGGLE STATE ---
+  const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
+
+  // --- 🔥 NEW: SCROLL INTO VIEW LOGIC ---
+  useEffect(() => {
+    if (focusedIndex >= 0 && resultListRef.current) {
+      const listItems = resultListRef.current.children;
+      if (listItems[focusedIndex]) {
+        listItems[focusedIndex].scrollIntoView({
+          behavior: "smooth",
+          block: "nearest", // Ensures it scrolls just enough to be visible
+        });
+      }
+    }
+  }, [focusedIndex]);
+
+  // --- GLOBAL KEYBOARD SHORTCUT LOGIC ---
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === "F4" || (e.ctrlKey && e.code === "Space")) {
+        e.preventDefault(); 
+        if (searchInputRef.current) searchInputRef.current.focus(); 
+      }
+      
+      if (e.key === "F2") {
+        e.preventDefault();
+        setSuggestionsEnabled(prev => !prev);
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
+  const fetchNextInvoice = async () => {
+    try {
+      const res = await api.get("/sales/next-id");
+      if (res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
+      else {
+        // fallback to time-based if API didn't return a next id
+        const timeCode = Math.floor(Date.now() / 1000);
+        setInvoiceNo(`RP-${timeCode}`);
+      }
+    } catch (error) {
+      console.error(error);
+      // Offline fallback
+      const timeCode = Math.floor(Date.now() / 1000);
+      setInvoiceNo(`RP-${timeCode}`);
+    }
+  };
+
+  useEffect(() => {
+    fetchNextInvoice();
+    return () => {};
+  }, [isStaff]);
+
+  const cartTotal = cart.reduce((a, b) => a + b.total, 0);
+  const doseVal = parseFloat(doseAmount) || 0;
+  const grandTotal = cartTotal + doseVal;
+
+  useEffect(() => {
+    const given = parseFloat(amountGiven) || 0;
+    setChangeToReturn(paymentMode === "Cash" && !isCredit ? given - grandTotal : 0);
+    localStorage.setItem("draft_sale_v3", JSON.stringify({ cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, isCredit, creditNotes }));
+  }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal, isCredit, creditNotes]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const refreshInventory = async () => {
+      try {
+        const fresh = await syncMedicinesCache(api);
+        if (mounted) setInventory(fresh);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    refreshInventory();
+    const intervalId = setInterval(refreshInventory, 5 * 60 * 1000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (query.length > 1 && suggestionsEnabled) {
+      const filtered = filterMedicinesFromCache(inventory, query, { includeOutOfStock: false, userRole });
+      setResults(filtered);
+      setFocusedIndex(-1);
+    } else {
+        setResults([]); 
+    }
+  }, [query, suggestionsEnabled, inventory, userRole]);
+
+  useEffect(() => {
+    if (customerSuggestionLockRef.current) {
+      customerSuggestionLockRef.current = false;
+      return;
+    }
+
+    if (!isBillNeeded) {
+      setCustomerSuggestions([]);
+      setShowCustomerSuggestions(false);
+      setFocusedCustomerIndex(-1);
+      return;
+    }
+
+    const term = customerFocusField === "phone" ? customer.phone : customer.name;
+    if (String(term || "").trim().length < 2) {
+      setCustomerSuggestions([]);
+      setShowCustomerSuggestions(false);
+      setFocusedCustomerIndex(-1);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get(`/credits/customers/search?q=${encodeURIComponent(term)}`);
+        const list = res.data?.data || [];
+        setCustomerSuggestions(list);
+        setShowCustomerSuggestions(list.length > 0);
+        setFocusedCustomerIndex(-1);
+      } catch {
+        setCustomerSuggestions([]);
+        setShowCustomerSuggestions(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [customer.name, customer.phone, customerFocusField, isBillNeeded]);
+
+  useEffect(() => {
+    if (!isBillNeeded) {
+      setCustomerPriceHistory({});
+      return;
+    }
+
+    const phone = String(customer.phone || '').trim();
+    const name = String(customer.name || '').trim();
+    const lookupLabel = phone.length >= 2 ? 'phone' : (name.length >= 2 ? 'name' : '');
+
+    if (!lookupLabel) {
+      setCustomerPriceHistory({});
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        if (phone.length >= 2) params.set('phone', phone);
+        if (name.length >= 2) params.set('name', name);
+
+        const res = await api.get(`/sales/customer-last-prices?${params.toString()}`);
+        const items = res.data?.items || [];
+        const nextMap = {};
+
+        items.forEach((item) => {
+          const key = item.medicineId
+            ? `id:${item.medicineId}`
+            : `name:${String(item.name || '').trim().toLowerCase()}|batch:${String(item.batch || '').trim().toLowerCase()}`;
+          nextMap[key] = item;
+        });
+
+        setCustomerPriceHistory(nextMap);
+      } catch (err) {
+        console.error('Failed to load customer price history:', err);
+        setCustomerPriceHistory({});
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [customer.name, customer.phone, isBillNeeded]);
+
+  // --- LOGIC ---
+  const calculateRowTotal = (price, qty, unit, packSize) => {
+    let effectivePrice = price;
+    if (unit === 'loose') { effectivePrice = price / (packSize || 1); }
+    return effectivePrice * qty;
+  };
+
+  const handleRateChange = (index, newRate) => {
+    const val = parseFloat(newRate);
+    const newCart = [...cart];
+    const item = newCart[index];
+    item.price = isNaN(val) ? 0 : val;
+    if (!isStaff && item.mrp > 0) {
+      item.discount = parseFloat((((item.mrp - item.price) / item.mrp) * 100).toFixed(2));
+    }
+    item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
+    setCart(newCart);
+  };
+
+  const handleDiscountChange = (index, newDisc) => {
+    const val = parseFloat(newDisc);
+    const newCart = [...cart];
+    const item = newCart[index];
+    item.discount = isNaN(val) ? 0 : val;
+    if (item.mrp > 0) {
+      item.price = parseFloat((item.mrp - item.mrp * (item.discount / 100)).toFixed(2));
+    }
+    item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
+    setCart(newCart);
+  };
+
+  const toggleUnit = (index, specificUnit = null) => {
+    const newCart = [...cart];
+    const item = newCart[index];
+    if (specificUnit) { item.unit = specificUnit; } else { item.unit = item.unit === 'pack' ? 'loose' : 'pack'; }
+    item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
+    setCart(newCart);
+  };
+
+  const handleQuantityKeyDown = (e, index) => {
+    if (e.key.toLowerCase() === 'l') { e.preventDefault(); toggleUnit(index, 'loose'); } 
+    else if (e.key.toLowerCase() === 'p') { e.preventDefault(); toggleUnit(index, 'pack'); }
+  };
+
+  const updateQty = (index, val) => {
+    const newQty = parseFloat(val);
+    if (!newQty || newQty <= 0) return;
+    const newCart = [...cart];
+    const item = newCart[index];
+    const requiredStock = item.unit === 'loose' ? (newQty / item.packSize) : newQty;
+    if (requiredStock > item.maxStock) { return alert(`⚠️ Stock Limit Exceeded!\nAvailable: ${item.maxStock} Packs`); }
+    item.quantity = newQty;
+    item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
+    setCart(newCart);
+  };
+
+  const addToCart = (med) => {
+    if (med.quantity <= 0) return alert("❌ This item is OUT OF STOCK!");
+    if (isStaff && !String(med.hsnCode || '').trim()) {
+      return alert("❌ This product has no HSN. Staff cannot bill it.");
+    }
+
+    // Expiry checks — expired stock can never be sold; near-expiry confirms once.
+    const expiryInfo = getExpiryInfo(med.expiryDate);
+    if (expiryInfo && expiryInfo.isExpired) {
+      return alert(`❌ This item is EXPIRED (${formatDateFull(expiryInfo.date)}) and cannot be sold.`);
+    }
+    if (expiryInfo && expiryInfo.daysLeft <= 90) {
+      const proceed = window.confirm(`⚠️ EXPIRY WARNING: This stock expires on ${formatExpiryShort(expiryInfo.date)} (${Math.max(0, expiryInfo.daysLeft)} days left). Add anyway?`);
+      if (!proceed) return;
+    }
+
+    setLastSale(null);
+    const idx = cart.findIndex((item) => item.medicineId === med._id);
+    const discount = med.mrp > 0 ? ((med.mrp - med.sellingPrice) / med.mrp) * 100 : 0;
+
+    if (idx !== -1) {
+      const newCart = [...cart];
+      const item = newCart[idx];
+      const newQty = item.quantity + 1;
+      const requiredStock = item.unit === 'loose' ? (newQty / item.packSize) : newQty;
+      if (requiredStock <= med.quantity) {
+        item.quantity += 1;
+        item.total = calculateRowTotal(item.price, item.quantity, item.unit, item.packSize);
+        setCart(newCart);
+      } else { alert(`Stock Limit: ${med.quantity}`); }
+    } else {
+      setCart([...cart, {
+          medicineId: med._id, name: med.productName, mrp: med.mrp, price: med.sellingPrice,
+          costPrice: med.costPrice || 0, maxDiscount: med.maxDiscount || 0, discount: discount.toFixed(2),
+          gst: med.gst || 0, hsn: String(med.hsnCode || '').trim(), batch: med.batchNumber || "N/A", expiry: med.expiryDate,
+          purchaseInvoiceNo: med.purchaseInvoiceNo || "", partyName: med.partyName || "",
+          quantity: 1, maxStock: med.quantity, packSize: med.packSize || 1, unit: 'pack', total: med.sellingPrice 
+      }]);
+    }
+    setQuery(""); setResults([]);
+  };
+
+  const getCustomerLastPrice = (item) => {
+    const directKey = item.medicineId ? `id:${item.medicineId}` : '';
+    const fallbackKey = `name:${String(item.name || '').trim().toLowerCase()}|batch:${String(item.batch || '').trim().toLowerCase()}`;
+    return customerPriceHistory[directKey] || customerPriceHistory[fallbackKey] || null;
+  };
+
+  // ✅ CHECKOUT LOGIC
+  const handleCheckout = async () => {
+    if (cart.length === 0 && doseVal <= 0) return alert("Cart is empty");
+    const given = parseFloat(amountGiven) || 0;
+    if (!isCredit && paymentMode === "Cash" && given < grandTotal) return alert("Insufficient Cash!");
+    if (isBillNeeded && !customer.name.trim()) return alert("Customer Name is required");
+    if (isCredit && !customer.phone.trim()) return alert("Customer Phone is required for Credit");
+
+    const finalCustomer = { name: customer.name.trim() || "Cash Sale", phone: isBillNeeded ? customer.phone : "", doctor: isBillNeeded ? customer.doctor : "" };
+
+    if (isStaff) {
+      const invalidItem = cart.find((i) => !String(i.hsn || '').trim());
+      if (invalidItem) return alert(`❌ HSN missing for item: ${invalidItem.name}`);
+    }
+
+    const finalItems = cart.map((i) => {
+        let quantityToSend = i.unit === 'loose' ? (i.quantity / i.packSize) : i.quantity;
+        quantityToSend = parseFloat(quantityToSend.toFixed(4));
+      const previousSale = getCustomerLastPrice(i);
+        return { 
+            ...i, 
+            quantity: quantityToSend,
+        medicineId: i.medicineId,
+        customerLastPrice: previousSale?.price ?? null,
+        customerLastPriceDate: previousSale?.date ?? null
+        };
+    });
+
+    const itemsForPrint = [...cart];
+    if (doseVal > 0) {
+      finalItems.push({ medicineId: null, name: "Medical/Dose Charge", batch: "-", expiry: null, hsn: "999", gst: 0, mrp: doseVal, price: doseVal, quantity: 1, total: doseVal, discount: 0 });
+      itemsForPrint.push({ name: "Medical/Dose Charge", batch: "-", expiry: null, mrp: doseVal, price: doseVal, quantity: 1, total: doseVal, discount: 0, unit: 'pack', packSize: 1 });
+    }
+
+    const saleData = { 
+      customerDetails: finalCustomer, 
+      totalAmount: grandTotal, 
+      paymentMode: isCredit ? 'Credit' : paymentMode, 
+      items: finalItems, 
+      isBillRequired: isBillNeeded, 
+      userRole: userRole,
+      isCredit: isCredit,
+      creditNotes: creditNotes
+    };
+
+    let billWindow = null;
+
+    try {
+      if (isBillNeeded === true) {
+        billWindow = window.open("", "_blank", "width=900,height=900");
+        if (billWindow) billWindow.document.write("<h3>Generating...</h3>"); else alert("Popup blocked!");
+      }
+
+      const res = await api.post("/sales", saleData);
+      const finalInvoiceNo = res.data.invoiceNo || "SAVED";
+
+      if (isBillNeeded === true && billWindow) {
+        const html = await generateBillHTML(itemsForPrint, { 
+            no: finalInvoiceNo, ...finalCustomer, mode: paymentMode, isDuplicate: false, 
+            grandTotal: grandTotal, 
+            doseAmount: doseVal 
+        });
+        billWindow.document.open(); billWindow.document.write(html); billWindow.document.close();
+      } else if (billWindow) billWindow.close();
+
+      setLastSale({ cart: itemsForPrint, invoiceNo: finalInvoiceNo, isBillRequired: isBillNeeded, customer: finalCustomer, paymentMode, doseAmount: doseVal });
+      setCart([]); setAmountGiven(""); setDoseAmount(""); setCustomer({ name: "", phone: "", doctor: "" });
+      fetchNextInvoice();
+
+    } catch (error) { 
+      if (billWindow) billWindow.close(); 
+      const backendMessage = error.response?.data?.message || error.response?.data?.error || error.message;
+      alert("Failed: " + backendMessage); 
+    }
+  };
+
+  const clearDraft = () => { localStorage.removeItem("draft_sale_v3"); setCart([]); setAmountGiven(""); setDoseAmount(""); setChangeToReturn(0); setPaymentMode("Cash"); setIsCredit(false); setCreditNotes(""); setCustomer({ name: "", phone: "", doctor: "" }); setResults([]); setQuery(""); };
+  
+  const handleReprint = async () => { 
+      if (!lastSale) return; 
+      const w = window.open("", "_blank", "width=900,height=900"); 
+      if (!w) return alert("Popup Blocked"); 
+      const html = await generateBillHTML(lastSale.cart, { 
+          no: lastSale.invoiceNo, name: lastSale.customer.name, phone: lastSale.customer.phone, 
+          doctor: lastSale.customer.doctor, mode: lastSale.paymentMode, isDuplicate: true, 
+          grandTotal: lastSale.cart.reduce((a, b) => a + b.total, 0),
+          doseAmount: parseFloat(lastSale.doseAmount) || 0 
+      }); 
+      w.document.open(); w.document.write(html); w.document.close(); 
+  };
+  
+  const handleKeyDown = (e) => { 
+      if (!suggestionsEnabled || results.length === 0) return; 
+
+      if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIndex((prev) => (prev < results.length - 1 ? prev + 1 : prev)); } 
+      else if (e.key === "ArrowUp") { e.preventDefault(); setFocusedIndex((prev) => (prev > 0 ? prev - 1 : 0)); } 
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        const selectedIdx = focusedIndex >= 0 ? focusedIndex : 0;
+        if (results[selectedIdx]) addToCart(results[selectedIdx]);
+      } 
+  };
+
+  const applyCustomerSuggestion = (item) => {
+    customerSuggestionLockRef.current = true;
+    setCustomer({
+      ...customer,
+      name: item.customerName || customer.name,
+      phone: item.customerPhone || customer.phone,
+      doctor: item.customerDoctor || customer.doctor,
+    });
+    setShowCustomerSuggestions(false);
+    setFocusedCustomerIndex(-1);
+  };
+
+  const handleCustomerKeyDown = (e) => {
+    if (!showCustomerSuggestions || customerSuggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFocusedCustomerIndex((prev) => (prev < customerSuggestions.length - 1 ? prev + 1 : prev));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFocusedCustomerIndex((prev) => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const idx = focusedCustomerIndex >= 0 ? focusedCustomerIndex : 0;
+      if (customerSuggestions[idx]) applyCustomerSuggestion(customerSuggestions[idx]);
+    } else if (e.key === "Escape") {
+      setShowCustomerSuggestions(false);
+    }
+  };
+  
+  const isLoss = (rate, cp) => rate < cp;
+  const isHighDisc = (disc, max) => disc > max;
+  const inputClass = "w-full p-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-all";
+  const labelClass = "block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1";
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-80px)] p-4 bg-gray-50">
+      {/* LEFT: SEARCH & CART */}
+      <div className="lg:col-span-2 flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="p-4 bg-gray-50 border-b border-gray-200">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-xl font-bold text-teal-800 flex items-center gap-2">
+              💊 New Sale
+            </h3>
+            <div className="flex items-center gap-3">
+              {cart.length > 0 && (
+                <button onClick={clearDraft} className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1 rounded hover:bg-red-100 transition-colors">Clear</button>
+              )}
+              <span className="hidden md:inline text-[10px] text-gray-400 font-medium">F4: Search</span>
+              <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold border border-indigo-200">
+                {invoiceNo}
+              </span>
+            </div>
+          </div>
+
+          <div className="relative">
+            <div className="relative">
+                <input
+                  ref={searchInputRef}
+                  className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-xl focus:outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/20 transition-all pr-24"
+                  placeholder="🔍 Scan / Search Medicine..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown} 
+                  autoFocus
+                />
+                <span 
+                    onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
+                    className={`absolute right-3 top-1/2 transform -translate-y-1/2 text-xs font-bold px-2 py-1 rounded cursor-pointer transition-colors border ${suggestionsEnabled ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-600 border-red-200'}`}
+                    title="Press F2 to Toggle"
+                >
+                </span>
+            </div>
+
+            {suggestionsEnabled && results.length > 0 && (
+              <div
+                ref={resultListRef}
+                className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto divide-y divide-gray-100"
+              >
+                {results.map((med, idx) => (
+                  <div
+                    key={med._id}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      addToCart(med);
+                    }}
+                    className={`p-3 cursor-pointer transition-colors flex justify-between items-center ${
+                      idx === focusedIndex 
+                        ? "bg-teal-100 border-l-4 border-teal-600" 
+                        : "hover:bg-teal-50"
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-gray-800">
+                        {med.productName}
+                      </div>
+                      
+                      <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-2 items-center">
+                        {med.quantity <= 0 ? (
+                          <span className="text-red-600 font-bold">Stock unavailable</span>
+                        ) : (
+                          <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600 font-semibold"}`}>
+                            Stock: {med.quantity}
+                          </span>
+                        )}
+                        <span>| Batch: {med.batchNumber}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openCostPriceWindow(med); }}
+                          className="bg-red-50 text-red-600 border border-red-200 text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer hover:bg-red-100"
+                          title="View cost price details"
+                        >₹ CP</button>
+                        <span>| GST: {med.gst || 0}%</span>
+                      </div>
+                    </div>
+                    
+                    <div className="text-right">
+                      <div className="font-bold text-teal-600 text-base">
+                        ₹{med.sellingPrice}
+                      </div>
+                      {!isStaff && (
+                        <div className="text-xs text-gray-400 line-through">
+                          MRP: {med.mrp}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {/* Table Code... */}
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
+              <tr>
+                <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Item</th>
+
+                {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">MRP</th>}
+                {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Disc%</th>}
+
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
+                  Rate
+                </th>
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
+                  Prev To This Patient
+                </th>
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Qty / Unit</th>
+                <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Total</th>
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {cart.map((item, idx) => {
+                const lossWarning = isLoss(parseFloat(item.price), item.costPrice);
+                const discWarning = isHighDisc(parseFloat(item.discount), item.maxDiscount);
+                return (
+                  <tr key={idx} className="hover:bg-gray-50 transition-colors group">
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-gray-800 text-sm">{item.name}</div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {!isStaff && <button onClick={() => openCostPriceWindow(item)} className="text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded hover:bg-red-100" title="View cost price details">₹ CP</button>}
+                        <div className="text-xs text-gray-500">Batch: {item.batch} | Pack: {item.packSize}</div>
+                        {item.expiry && (
+                          <span className={`text-[10px] font-semibold ${isExpiringSoon(item.expiry) ? 'text-orange-600' : 'text-gray-400'}`}>
+                            {isExpiringSoon(item.expiry) ? '⚠️' : ''} Exp: {formatExpiryShort(item.expiry)}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+
+                    {!isStaff && <td className="px-2 py-3 text-center text-gray-400 text-sm">₹{item.mrp}</td>}
+
+                    {!isStaff && (
+                      <td className="px-2 py-3 text-center">
+                        <input
+                          type="number"
+                          value={item.discount}
+                          onChange={(e) =>
+                            handleDiscountChange(idx, e.target.value)
+                          }
+                          className={`w-14 p-1 text-center text-sm border rounded outline-none focus:ring-2 focus:ring-teal-500 ${
+                            discWarning
+                              ? "border-red-500 text-red-600 bg-red-50"
+                              : "border-gray-300"
+                          }`}
+                        />
+                      </td>
+                    )}
+
+                    <td className="px-2 py-3 text-center relative">
+                      <input
+                        type="number"
+                        value={item.price}
+                        onChange={(e) => handleRateChange(idx, e.target.value)}
+                        className={`w-16 p-1 text-center text-sm font-bold border rounded outline-none focus:ring-2 focus:ring-teal-500 ${
+                          lossWarning
+                            ? "border-red-500 text-red-600 bg-red-50"
+                            : "border-gray-300"
+                        }`}
+                      />
+                      {(lossWarning || discWarning) && (
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 bg-red-100 border border-red-200 text-red-600 text-[10px] px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap mt-1 font-bold z-20 flex flex-col items-center">
+                          {lossWarning && <span>⚠️ Below CP</span>}
+                          {(!isStaff && discWarning) && <span>⚠️ High Disc</span>}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="px-2 py-3 text-center">
+                      {(() => {
+                        const previousSale = getCustomerLastPrice(item);
+                        if (!previousSale) {
+                          return <span className="text-xs text-gray-400 italic">-</span>;
+                        }
+
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-xs font-bold text-indigo-700">
+                              ₹{Number(previousSale.price || 0).toFixed(2)}
+                            </span>
+                            <span className="text-[10px] text-gray-400">
+                              {previousSale.date ? new Date(previousSale.date).toLocaleDateString('en-IN') : ''}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+
+                    <td className="px-2 py-3 text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="flex items-center justify-center border border-gray-300 rounded overflow-hidden w-24 bg-white">
+                            <button onClick={() => updateQty(idx, item.quantity - 1)} className="px-2 py-1 bg-gray-50 text-gray-600 font-bold">-</button>
+                            <input type="number" value={item.quantity} onChange={(e) => updateQty(idx, e.target.value)} onKeyDown={(e) => handleQuantityKeyDown(e, idx)} className="w-8 text-center text-sm font-semibold outline-none" />
+                            <button onClick={() => updateQty(idx, item.quantity + 1)} className="px-2 py-1 bg-gray-50 text-gray-600 font-bold">+</button>
+                        </div>
+                        <span onClick={() => toggleUnit(idx)} className={`text-[9px] font-bold px-2 py-0.5 rounded cursor-pointer uppercase border ${item.unit === 'loose' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-teal-50 text-teal-700 border-teal-200'}`}>{item.unit === 'loose' ? '✂️ LOOSE' : '📦 PACK'}</span>
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3 text-right font-bold text-teal-700 text-sm">
+                      ₹{item.total.toFixed(2)}
+                    </td>
+
+                    <td className="px-2 py-3 text-center">
+                      <button
+                        onClick={() => {
+                          const c = [...cart];
+                          c.splice(idx, 1);
+                          setCart(c);
+                        }}
+                        className="text-gray-400 hover:text-red-500 text-lg transition-colors"
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {cart.length === 0 && (
+                <tr>
+                  <td colSpan={isStaff ? 5 : 7} className="py-20 text-center text-gray-400 italic">
+                    {suggestionsEnabled ? "Cart is empty. Press F4 to search." : ""}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* RIGHT: CHECKOUT (Same as before) */}
+      <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col h-fit sticky top-4">
+        {/* ... Checkout UI ... */}
+        <div className="bg-linear-to-br from-teal-600 to-teal-800 rounded-xl p-6 text-center text-white shadow-lg mb-6">
+          <div className="text-teal-100 text-xs font-bold uppercase tracking-wider mb-1">
+            Grand Total
+          </div>
+          <div className="text-4xl font-extrabold">
+            ₹{grandTotal.toFixed(0)}
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-2 bg-teal-800/50 p-2 rounded-lg border border-teal-500/30">
+            <span className="text-xs font-bold text-teal-100 uppercase">Charge:</span>
+            <input type="number" placeholder="0" value={doseAmount} onChange={(e) => setDoseAmount(e.target.value)} className="w-20 bg-white text-teal-900 font-bold text-center rounded px-1 py-1 text-sm focus:outline-none" />
+          </div>
+        </div>
+
+        {lastSale && (
+          <div
+            className={`mb-4 border rounded-lg p-3 flex justify-between items-center animate-pulse-once ${
+              lastSale.isBillRequired
+                ? "bg-green-50 border-green-200"
+                : "bg-orange-50 border-orange-200"
+            }`}
+          >
+            <span
+              className={`font-bold text-sm ${
+                lastSale.isBillRequired ? "text-green-700" : "text-orange-700"
+              }`}
+            >
+              {lastSale.isBillRequired
+                ? "✅ Sale Saved!"
+                : "✅ Saved (No Bill Created)"}
+            </span>
+            {lastSale.isBillRequired && (
+              <button
+                onClick={handleReprint}
+                className="text-sm underline font-bold text-green-800 hover:text-green-900"
+              >
+                Reprint Bill
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="mb-6">
+          <div className="flex justify-between items-center mb-2">
+            <span className={labelClass}>Customer Details</span>
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-teal-700">
+              <input
+                type="checkbox"
+                checked={isBillNeeded}
+                onChange={(e) => setIsBillNeeded(e.target.checked)}
+                className="w-4 h-4 text-teal-600 rounded focus:ring-teal-500"
+              />
+              Print Bill
+            </label>
+          </div>
+
+          <div className="space-y-3">
+            <div className="relative">
+              <input
+                className={`${inputClass} ${
+                  isBillNeeded && !customer.name ? "border-red-400 bg-red-50" : ""
+                }`}
+                placeholder={
+                  isBillNeeded ? "Customer Name *" : "Customer Name (Optional)"
+                }
+                value={customer.name}
+                onFocus={() => setCustomerFocusField("name")}
+                onKeyDown={handleCustomerKeyDown}
+                onChange={(e) => {
+                  setCustomerFocusField("name");
+                  setCustomer({ ...customer, name: e.target.value });
+                }}
+                onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 80)}
+              />
+
+              {isBillNeeded && showCustomerSuggestions && customerSuggestions.length > 0 && customerFocusField === "name" && (
+                <div className="absolute z-30 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                  {customerSuggestions.map((item, idx) => (
+                    <button
+                      key={`${item._id}-${idx}`}
+                      type="button"
+                      className={`w-full px-3 py-2 text-left text-sm ${idx === focusedCustomerIndex ? "bg-teal-50" : "hover:bg-gray-50"}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applyCustomerSuggestion(item);
+                      }}
+                    >
+                      <div className="font-semibold text-gray-800">{item.customerName}</div>
+                      <div className="text-xs text-gray-500">{item.customerPhone || "No Phone"}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {isBillNeeded && (
+              <div className="flex gap-3">
+                <div className="relative w-full">
+                  <input
+                    className={inputClass}
+                    placeholder="Phone"
+                    value={customer.phone}
+                    onFocus={() => setCustomerFocusField("phone")}
+                    onKeyDown={handleCustomerKeyDown}
+                    onChange={(e) => {
+                      setCustomerFocusField("phone");
+                      setCustomer({ ...customer, phone: e.target.value });
+                    }}
+                      onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 80)}
+                  />
+
+                  {showCustomerSuggestions && customerSuggestions.length > 0 && customerFocusField === "phone" && (
+                    <div className="absolute z-30 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                      {customerSuggestions.map((item, idx) => (
+                        <button
+                          key={`${item._id}-phone-${idx}`}
+                          type="button"
+                          className={`w-full px-3 py-2 text-left text-sm ${idx === focusedCustomerIndex ? "bg-teal-50" : "hover:bg-gray-50"}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            applyCustomerSuggestion(item);
+                          }}
+                        >
+                          <div className="font-semibold text-gray-800">{item.customerPhone || "No Phone"}</div>
+                          <div className="text-xs text-gray-500">{item.customerName}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <input
+                  className={inputClass}
+                  placeholder="Dr. Ref"
+                  value={customer.doctor}
+                  onChange={(e) =>
+                    setCustomer({ ...customer, doctor: e.target.value })
+                  }
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <span className={labelClass}>Payment Mode</span>
+          <div className="flex gap-3 mt-2">
+            <button
+              className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
+                paymentMode === "Cash" && !isCredit
+                  ? "bg-teal-700 text-white border-teal-700 shadow-md"
+                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => { setPaymentMode("Cash"); setIsCredit(false); }}
+            >
+              💵 Cash
+            </button>
+            <button
+              className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
+                paymentMode === "Online" && !isCredit
+                  ? "bg-teal-700 text-white border-teal-700 shadow-md"
+                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => { setPaymentMode("Online"); setIsCredit(false); }}
+            >
+              📱 UPI / Online
+            </button>
+            <button
+              className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
+                isCredit
+                  ? "bg-pink-700 text-white border-pink-700 shadow-md"
+                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => { setIsCredit(true); setPaymentMode("Credit"); }}
+            >
+              💳 उधारी (Credit)
+            </button>
+          </div>
+          {!isCredit && paymentMode === "Cash" && (
+            <div className="mt-4 bg-orange-50 border border-orange-100 rounded-lg p-3 flex justify-between items-center">
+              <input
+                type="number"
+                placeholder="Given Amount"
+                value={amountGiven}
+                onChange={(e) => setAmountGiven(e.target.value)}
+                className="w-24 p-2 text-sm border border-orange-200 rounded focus:outline-none focus:border-orange-400"
+              />
+              <div className="text-right">
+                <div className="text-xs text-gray-500 uppercase font-bold">
+                  Return Change
+                </div>
+                <div
+                  className={`text-xl font-bold ${
+                    changeToReturn < 0 ? "text-red-600" : "text-green-600"
+                  }`}
+                >
+                  ₹{changeToReturn.toFixed(0)}
+                </div>
+              </div>
+            </div>
+          )}
+          {isCredit && (
+            <div className="mt-4 bg-pink-50 border border-pink-200 rounded-lg p-3">
+              <label className="block text-xs font-bold text-pink-700 uppercase mb-2">
+                📝 Credit Notes (Optional)
+              </label>
+              <textarea
+                value={creditNotes}
+                onChange={(e) => setCreditNotes(e.target.value)}
+                placeholder="Add any notes or terms..."
+                className="w-full p-2 text-sm border border-pink-200 rounded focus:outline-none focus:border-pink-400"
+                rows="3"
+              ></textarea>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={handleCheckout}
+          className="w-full bg-teal-800 hover:bg-teal-900 text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all transform active:scale-95 text-lg flex justify-center items-center gap-2"
+        >
+          COMPLETE SALE ➔
+        </button>
+      </div>
+    </div>
+  );
+};
+
+/* eslint-enable react-hooks/set-state-in-effect */
+
+export default SaleForm;

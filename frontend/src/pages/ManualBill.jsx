@@ -1,0 +1,513 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { generateBillHTML } from '../utils/BillGenerator';
+import api from '../api/axios'; 
+import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from '../utils/medicineCache';
+
+const getLocalDateString = () => {
+    const date = new Date();
+    const offset = date.getTimezoneOffset() * 60000; 
+    return new Date(date.getTime() - offset).toISOString().split('T')[0];
+};
+
+const formatTime24Hour = (date = new Date()) => {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+};
+
+const to12HourTimeFrom24 = (time24, dateStr) => {
+    const safeTime = /^\d{2}:\d{2}$/.test(String(time24 || '')) ? time24 : formatTime24Hour(new Date());
+    const baseDate = dateStr || getLocalDateString();
+    const parsed = new Date(`${baseDate}T${safeTime}:00`);
+    return parsed.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+};
+
+const ManualBill = () => {
+  const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '', mode: 'Cash' });
+    const [invoiceNo, setInvoiceNo] = useState('Loading...');
+
+    const fetchNextInvoice = async () => {
+        try {
+            const res = await api.get('/sales/next-id');
+            if (res.data && res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
+            else setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
+        } catch (error) {
+                console.error(error);
+            setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
+        }
+    };
+  
+  const [billDate, setBillDate] = useState(getLocalDateString()); 
+        const [billTime, setBillTime] = useState(formatTime24Hour(new Date()));
+
+  // ✅ ADDED HSN & GST TO STATE
+  const [currentItem, setCurrentItem] = useState({
+    id: null, 
+    name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1,
+    hsn: '', gst: 0 
+  });
+
+  const [cart, setCart] = useState([]);
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1); 
+  const [isSuggestionsEnabled, setIsSuggestionsEnabled] = useState(true);
+
+  const searchRef = useRef(null);
+  const resultListRef = useRef(null);
+    const suggestionSelectionLockRef = useRef(false);
+  const currentUserRole = localStorage.getItem('userRole') || 'admin';
+    const [inventory, setInventory] = useState(() => getCachedMedicines());
+
+  useEffect(() => {
+    if (focusedIndex >= 0 && resultListRef.current) {
+      const listItems = resultListRef.current.children;
+      if (listItems[focusedIndex]) {
+        listItems[focusedIndex].scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }, [focusedIndex]);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+        if (e.key === "F2") {
+            e.preventDefault(); 
+            setIsSuggestionsEnabled(prev => !prev);
+            setShowSuggestions(false); 
+        }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
+  useEffect(() => {
+        let mounted = true;
+
+        const refreshInventory = async () => {
+            try {
+                const fresh = await syncMedicinesCache(api);
+                if (mounted) setInventory(fresh);
+            } catch (error) {
+                console.error(error);
+            }
+        };
+
+        refreshInventory();
+        const intervalId = setInterval(refreshInventory, 5 * 60 * 1000);
+
+        return () => {
+            mounted = false;
+            clearInterval(intervalId);
+        };
+    }, []);
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    useEffect(() => { fetchNextInvoice(); }, []);
+
+    useEffect(() => {
+    const fetchMedicines = async () => {
+        if (suggestionSelectionLockRef.current) {
+            suggestionSelectionLockRef.current = false;
+            return;
+        }
+
+        if (isSuggestionsEnabled && query.length > 1) {
+            try {
+                                const filtered = filterMedicinesFromCache(inventory, query, { includeOutOfStock: false, userRole: currentUserRole });
+                setSuggestions(filtered);
+                setShowSuggestions(true);
+                setFocusedIndex(-1); 
+            } catch (error) { console.error(error); setSuggestions([]); }
+        } else { setSuggestions([]); setShowSuggestions(false); }
+    };
+        const timer = setTimeout(fetchMedicines, 150);
+    return () => clearTimeout(timer);
+    }, [query, isSuggestionsEnabled, inventory, currentUserRole]);
+
+  useEffect(() => {
+      const handleClickOutside = (event) => {
+          if (searchRef.current && !searchRef.current.contains(event.target)) {
+              setShowSuggestions(false);
+          }
+      };
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleKeyDown = (e) => {
+    if (!showSuggestions || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : prev)); } 
+    else if (e.key === "ArrowUp") { e.preventDefault(); setFocusedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
+        else if (e.key === "Enter") {
+            e.preventDefault();
+            const selectedIdx = focusedIndex >= 0 ? focusedIndex : 0;
+            if (suggestions[selectedIdx]) handleSelectMedicine(suggestions[selectedIdx]);
+        } 
+    else if (e.key === "Escape") { setShowSuggestions(false); }
+  };
+
+  const handleSelectMedicine = (med) => {
+      if (currentUserRole === 'staff' && !String(med.hsnCode || '').trim()) {
+          return alert("❌ This product has no HSN. Staff cannot bill it.");
+      }
+
+      // Check purchase date restriction against chosen bill date
+      const pDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
+      if (pDate) {
+          const selectedBillDate = new Date(`${billDate}T00:00:00`);
+          const pDateOnly = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate());
+          if (selectedBillDate < pDateOnly) {
+              return alert(`❌ Item cannot be sold before its purchase date!\nPurchase Date: ${pDate.toLocaleDateString('en-IN')}`);
+          }
+      }
+
+      suggestionSelectionLockRef.current = true;
+
+      setCurrentItem({
+          id: med._id, 
+          name: med.productName,
+          batch: med.batchNumber || '',
+          expiry: med.expiryDate ? new Date(med.expiryDate).toISOString().split('T')[0] : '',
+          mrp: med.mrp || '',
+          price: med.sellingPrice || '',
+          quantity: 1,
+          unit: 'pack', 
+          packSize: med.packSize || 10,
+          hsn: med.hsnCode || '', // <--- 🔥 CAPTURE HSN
+          gst: med.gst || 0,      // <--- 🔥 CAPTURE GST
+          purchaseDate: med.purchaseDate || med.createdAt || null
+      });
+      setQuery(med.productName);
+      setShowSuggestions(false);
+  };
+
+  const handleAddItem = () => {
+    if (!currentItem.name || !currentItem.price || !currentItem.quantity) {
+      return alert("Please fill Name, Price and Quantity");
+    }
+
+        if (currentUserRole === 'staff' && !String(currentItem.hsn || '').trim()) {
+            return alert("HSN is required for staff billing.");
+        }
+
+    let rowTotal = parseFloat(currentItem.price) * parseFloat(currentItem.quantity);
+    if(currentItem.unit === 'loose') {
+        rowTotal = (parseFloat(currentItem.price) / (currentItem.packSize || 1)) * parseFloat(currentItem.quantity);
+    }
+
+    const newItem = {
+      ...currentItem,
+      total: rowTotal,
+            hsn: String(currentItem.hsn || '').trim(),
+      gst: currentItem.gst || 0,
+      medicineId: currentItem.id || null, 
+    };
+    setCart([...cart, newItem]);
+    
+    setCurrentItem({ id: null, name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1, hsn: '', gst: 0 });
+    setQuery(""); 
+  };
+
+  const removeItem = (index) => {
+    const newCart = [...cart];
+    newCart.splice(index, 1);
+    setCart(newCart);
+  };
+
+  const toggleUnit = (index) => {
+    const newCart = [...cart];
+    const item = newCart[index];
+    item.unit = item.unit === 'pack' ? 'loose' : 'pack';
+    let pricePerUnit = item.price;
+    if(item.unit === 'loose') pricePerUnit = item.price / (item.packSize || 1);
+    item.total = pricePerUnit * item.quantity;
+    setCart(newCart);
+  };
+
+  const updateCartQty = (index, val) => {
+      const newQty = parseFloat(val);
+      if(!newQty || newQty <= 0) return;
+      const newCart = [...cart];
+      const item = newCart[index];
+      item.quantity = newQty;
+      let pricePerUnit = item.price;
+      if(item.unit === 'loose') pricePerUnit = item.price / (item.packSize || 1);
+      item.total = pricePerUnit * item.quantity;
+      setCart(newCart);
+  };
+
+  const handleGenerateBill = async () => {
+    if (cart.length === 0) return alert("Add items first!");
+    if (!customer.name) return alert("Customer Name is required!");
+
+        if (currentUserRole === 'staff') {
+                const invalidItem = cart.find((item) => !String(item.hsn || '').trim());
+                if (invalidItem) return alert(`❌ HSN missing for item: ${invalidItem.name}`);
+        }
+
+        const billTime24 = /^\d{2}:\d{2}$/.test(String(billTime || '')) ? billTime : formatTime24Hour(new Date());
+        if (billTime24 !== billTime) {
+            setBillTime(billTime24);
+        }
+
+        const combinedDateTime = new Date(`${billDate}T${billTime24}:00`);
+
+        const itemsForSale = cart.map((item) => {
+            const rawQty = parseFloat(item.quantity) || 0;
+            const parsedPackSize = parseFloat(item.packSize) || 1;
+            const quantityForStock = item.medicineId && item.unit === 'loose'
+                ? rawQty / parsedPackSize
+                : rawQty;
+
+            return {
+                ...item,
+                quantity: parseFloat(quantityForStock.toFixed(4)),
+                packSize: parsedPackSize,
+                price: parseFloat(item.price) || 0,
+                mrp: parseFloat(item.mrp) || 0,
+                gst: parseFloat(item.gst) || 0,
+                total: parseFloat(item.total) || 0,
+                expiry: item.expiry || null,
+            };
+        });
+
+    const saleData = {
+        // Don't send invoiceNo here — backend will allocate the next year-based sequence
+        customerDetails: customer,
+        totalAmount: cart.reduce((a,b)=>a+b.total,0),
+        paymentMode: customer.mode,
+        items: itemsForSale,
+        isBillRequired: true,
+        userRole: currentUserRole, 
+        customDate: combinedDateTime,
+        isCredit: customer.mode === 'Credit'
+    };
+
+    try {
+        const res = await api.post('/sales', saleData);
+        const returnedInvoiceNo = res.data?.invoiceNo || invoiceNo;
+        const invData = {
+            no: returnedInvoiceNo,
+            name: customer.name,
+            phone: customer.phone,
+            doctor: customer.doctor,
+            mode: customer.mode,
+            customDate: billDate, 
+            customTime: to12HourTimeFrom24(billTime24, billDate)
+        };
+
+        const billHTML = await generateBillHTML(cart, invData);
+        const billWindow = window.open('', '', 'width=900,height=900');
+        if (billWindow) {
+            billWindow.document.write(billHTML);
+            billWindow.document.close();
+        }
+
+        setCustomer({ name: '', phone: '', doctor: '', mode: 'Cash' });
+        setCart([]);
+        fetchNextInvoice();
+        setBillDate(getLocalDateString());
+        setBillTime(formatTime24Hour(new Date()));
+
+    } catch (error) {
+        const backendMessage = error.response?.data?.message || error.response?.data?.error || error.message;
+        alert("Error saving bill: " + backendMessage);
+    }
+  };
+
+  const inputClass = "w-full p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-all";
+
+  return (
+    <div className="max-w-7xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[85vh]">
+      {/* LEFT: FORM */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col gap-6">
+        <h3 className="text-xl font-bold text-gray-800 border-b pb-3">📝 Create Custom Bill</h3>
+        <div className="bg-slate-50 p-5 rounded-lg border border-slate-200">
+            <h4 className="text-sm font-bold text-teal-700 mb-3 flex items-center gap-2">1. Bill Details</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input type="date" className={inputClass} value={billDate} onChange={e => setBillDate(e.target.value)} />
+                <input
+                    type="time"
+                    className={inputClass}
+                    value={billTime}
+                    onChange={e => setBillTime(e.target.value)}
+                    onBlur={(e) => {
+                        if (!e.target.value) {
+                            setBillTime(formatTime24Hour(new Date()));
+                        }
+                    }}
+                />
+                <button
+                    type="button"
+                    className="w-full px-3 py-2 text-sm font-bold bg-teal-50 text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-100"
+                    onClick={() => setBillTime(formatTime24Hour(new Date()))}
+                >
+                    Use Current Time
+                </button>
+                <input className={inputClass} placeholder="Patient Name *" value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})} />
+                <input className={inputClass} placeholder="Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
+                <input className={inputClass} placeholder="Doctor Name" value={customer.doctor} onChange={e=>setCustomer({...customer, doctor:e.target.value})} />
+                <select className={inputClass} value={customer.mode} onChange={e=>setCustomer({...customer, mode:e.target.value})}>
+                    <option value="Cash">💵 Cash</option>
+                    <option value="Online">📱 Online</option>
+                    <option value="Credit">💳 उधारी (Credit)</option>
+                </select>
+            </div>
+        </div>
+
+        <div className="bg-teal-50 p-5 rounded-lg border border-teal-100 flex-grow">
+            <div className="flex justify-between items-center mb-3">
+                <h4 className="text-sm font-bold text-teal-800">2. Add Medicine / Item</h4>
+                <div className={`text-xs px-2 py-1 rounded-full font-bold transition-colors ${isSuggestionsEnabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {isSuggestionsEnabled ? '' : ''}
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-3 relative" ref={searchRef}>
+                <div className="relative">
+                    <input 
+                        className={inputClass} 
+                        placeholder={isSuggestionsEnabled ? "Search or Type Medicine Name *" : "Type Medicine Name (Manual Mode) *"} 
+                        value={query} 
+                        onChange={e => {
+                            setQuery(e.target.value);
+                            setCurrentItem({...currentItem, name: e.target.value});
+                        }} 
+                        onKeyDown={handleKeyDown} 
+                        onFocus={() => isSuggestionsEnabled && query.length > 1 && setShowSuggestions(true)}
+                    />
+                    {showSuggestions && suggestions.length > 0 && (
+                        <div 
+                            ref={resultListRef} 
+                            className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto"
+                        >
+                            {suggestions.map((med, idx) => (
+                                <div 
+                                    key={med._id} 
+                                                                        onMouseDown={(e) => {
+                                                                            e.preventDefault();
+                                                                            handleSelectMedicine(med);
+                                                                        }} 
+                                    className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center ${idx === focusedIndex ? 'bg-teal-100 border-l-4 border-teal-600' : 'hover:bg-teal-50'}`}
+                                >
+                                    <div>
+                                        <div className="font-bold text-gray-800">{med.productName}</div>
+                                        <div className="text-xs text-gray-500 flex flex-wrap gap-1 items-center">
+                                            {med.quantity <= 0 ? (
+                                                <span className="text-red-600 font-bold">Stock unavailable</span>
+                                            ) : (
+                                                <span>Stock: {med.quantity}</span>
+                                            )}
+                                            <span>| Batch: {med.batchNumber}</span>
+                                            <span>| {med.costPrice}</span>
+                                            <span>| GST: {med.gst || 0}%</span>
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-teal-600 font-bold text-sm">₹{med.sellingPrice}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3">
+                    <input className={inputClass} placeholder="Batch" value={currentItem.batch} onChange={e=>setCurrentItem({...currentItem, batch:e.target.value})} />
+                    <input type="date" className={inputClass} placeholder="Expiry" value={currentItem.expiry} onChange={e=>setCurrentItem({...currentItem, expiry:e.target.value})} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                    <input className={inputClass} placeholder="HSN" value={currentItem.hsn} onChange={e=>setCurrentItem({...currentItem, hsn:e.target.value})} />
+                    <input type="number" className={inputClass} placeholder="GST %" value={currentItem.gst} onChange={e=>setCurrentItem({...currentItem, gst:e.target.value})} />
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                    <input type="number" className={inputClass} placeholder="MRP" value={currentItem.mrp} onChange={e=>setCurrentItem({...currentItem, mrp:e.target.value})} />
+                    <input type="number" className={`${inputClass} font-bold text-teal-700`} placeholder="Price *" value={currentItem.price} onChange={e=>setCurrentItem({...currentItem, price:e.target.value})} />
+                    <select className={inputClass} value={currentItem.unit} onChange={e=>setCurrentItem({...currentItem, unit:e.target.value})}>
+                        <option value="pack">Pack</option>
+                        <option value="loose">Loose</option>
+                    </select>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-gray-500">Qty:</span>
+                      <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
+                      <span className="text-xs font-bold text-gray-500 ml-2">Pack Size:</span>
+                      <input type="number" className={inputClass} placeholder="10" value={currentItem.packSize} onChange={e=>setCurrentItem({...currentItem, packSize:e.target.value})} />
+                </div>
+
+                <button onClick={handleAddItem} className="w-full mt-2 bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 rounded-lg shadow-md transition-all transform active:scale-95">
+                    + Add to Bill
+                </button>
+            </div>
+        </div>
+      </div>
+
+      {/* RIGHT: PREVIEW & PRINT */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-between h-full">
+        <div className="flex-grow flex flex-col">
+            <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-4">
+                <h3 className="text-lg font-bold text-gray-800">Bill Preview</h3>
+                <div className="bg-gray-100 text-gray-600 text-xs font-bold px-3 py-1 rounded-full border border-gray-200">{invoiceNo}</div>
+            </div>
+
+            <div className="overflow-x-auto flex-grow">
+                <table className="w-full text-left text-sm border-collapse">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                            <th className="p-3 font-semibold text-gray-600">Item</th>
+                            <th className="p-3 font-semibold text-gray-600">Batch</th>
+                            <th className="p-3 font-semibold text-gray-600 text-center">Qty / Unit</th>
+                            <th className="p-3 font-semibold text-gray-600 text-right">Price</th>
+                            <th className="p-3 font-semibold text-gray-600 text-right">Total</th>
+                            <th className="p-3 font-semibold text-gray-600 w-8"></th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {cart.length === 0 ? (
+                            <tr><td colSpan="6" className="text-center py-10 text-gray-400 italic">No items added yet.</td></tr>
+                        ) : (
+                            cart.map((item, i) => (
+                                <tr key={i} className="hover:bg-gray-50 transition-colors">
+                                    <td className="p-3 text-gray-800 font-medium">
+                                        {item.name} 
+                                        <div className="text-[10px] text-gray-400">HSN: {item.hsn || '-'} | Pk: {item.packSize} | GST: {item.gst}%</div>
+                                    </td>
+                                    <td className="p-3 text-gray-500 text-xs">{item.batch}</td>
+                                    <td className="p-3 text-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                            <input type="number" value={item.quantity} onChange={(e) => updateCartQty(i, e.target.value)} className="w-10 text-center font-bold border rounded outline-none text-gray-700" />
+                                            <span onClick={() => toggleUnit(i)} className={`text-[9px] font-bold px-2 py-0.5 rounded cursor-pointer uppercase border ${item.unit === 'loose' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-teal-50 text-teal-700 border-teal-200'}`}>{item.unit === 'loose' ? '✂️ LOOSE' : '📦 PACK'}</span>
+                                        </div>
+                                    </td>
+                                    <td className="p-3 text-right text-gray-600">₹{item.price}</td>
+                                    <td className="p-3 text-right font-bold text-teal-600">₹{item.total.toFixed(2)}</td>
+                                    <td className="p-3 text-center">
+                                        <button onClick={()=>removeItem(i)} className="text-red-400 hover:text-red-600 font-bold text-lg px-2 transition-colors">×</button>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div className="mt-6 pt-6 border-t-2 border-dashed border-gray-200">
+            <div className="flex justify-between items-end mb-4">
+                <span className="text-gray-500 font-bold uppercase tracking-wider text-sm">Grand Total</span>
+                <span className="text-3xl font-extrabold text-teal-700">₹{cart.reduce((a,b)=>a+b.total,0).toFixed(2)}</span>
+            </div>
+            <button onClick={handleGenerateBill} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl shadow-lg transition-all transform active:scale-95 flex items-center justify-center gap-2">
+                🖨️ Generate & Print Bill
+            </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ManualBill;

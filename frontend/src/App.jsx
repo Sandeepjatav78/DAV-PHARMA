@@ -1,0 +1,59 @@
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Sidebar from './components/Sidebar'; 
+import Dashboard from './pages/Dashboard';
+import SaleForm from './components/SaleForm';
+import DailyReport from './pages/DailyReport';
+import ManualBill from './pages/ManualBill'; 
+import CreditLedger from './pages/CreditLedger';
+import PurchaseReturn from './pages/PurchaseReturn';
+import KachiEntry from './pages/KachiEntry';
+import PurchaseBillEntry from './pages/PurchaseBillEntry';
+import PurchaseBillHistory from './pages/PurchaseBillHistory';
+import SupplierLedger from './pages/SupplierLedger';
+import ScheduleLedger from './pages/ScheduleLedger';
+import PriceChecker from './components/PriceChecker';
+import DoctorPriceChecker from './components/DoctorPriceChecker';
+import Login from './pages/Login'; 
+import PrivateRoute from './components/PrivateRoute'; 
+import SessionWatcher from './components/SessionWatcher';
+import ShoppingListWidget from './components/ShoppingListWidget';
+
+function App() {
+  return (
+    <Router>
+      <SessionWatcher>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+
+          <Route path="*" element={
+            <PrivateRoute>
+              <div className="min-h-screen bg-slate-100 flex flex-col">
+                <Sidebar />
+                <main className="flex-1 w-full px-3 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6">
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/sales" element={<SaleForm />} />
+                    <Route path="/manual" element={<ManualBill />} />
+                    <Route path="/kachi-entry" element={<KachiEntry />} />
+                    <Route path="/purchase-bill" element={<PurchaseBillEntry />} />
+                    <Route path="/purchase-bill-history" element={<PurchaseBillHistory />} />
+                    <Route path="/supplier-ledger" element={<SupplierLedger />} />
+                    <Route path="/check-price" element={<PriceChecker />} />
+                    <Route path="/doctor-price" element={<DoctorPriceChecker />} />
+                    <Route path="/reports" element={<DailyReport />} />
+                    <Route path="/credits" element={<CreditLedger />} />
+                    <Route path="/schedule-ledger" element={<ScheduleLedger />} />
+                    <Route path="/purchase-returns" element={<PurchaseReturn />} />
+                  </Routes>
+                </main>
+                <ShoppingListWidget />
+              </div>
+            </PrivateRoute>
+          } />
+        </Routes>
+      </SessionWatcher>
+    </Router>
+  );
+}
+
+export default App;

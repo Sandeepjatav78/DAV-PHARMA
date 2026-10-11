@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "DAV Pharma Bill Scanner",
+    "slug": "dav-pharma-bill-scanner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app uses camera to scan pharmacy purchase bills."
+      }
+    },
+    "android": {
+      "package": "com.radhepharmacy.billscanner",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-status-bar"
+    ]
+  }
+}

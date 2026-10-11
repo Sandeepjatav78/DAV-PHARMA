@@ -1,0 +1,82 @@
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const connectDB = require('./config/db');
+// const path = require('path'); // You can remove this if using Cloudinary, Vercel doesn't use local uploads
+
+// Import Routes
+const inventoryRoutes = require('./routes/inventoryRoutes');
+const salesRoutes = require('./routes/salesRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const creditRoutes = require('./routes/creditRoutes');
+
+const app = express();
+
+// Middleware
+const parseOrigins = (value = '') =>
+  value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const allowedOrigins = new Set([
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://retail-mocha-five.vercel.app',
+  ...parseOrigins(process.env.CORS_ORIGINS),
+  ...parseOrigins(process.env.FRONTEND_URL),
+]);
+
+const isLocalhostOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser requests (no Origin header), explicitly whitelisted frontends,
+    // and any localhost port (Vite auto-increments when 5173 is taken).
+    if (!origin || allowedOrigins.has(origin) || isLocalhostOrigin(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Database Connection
+console.log('[INFO] Attempting to connect to MongoDB...');
+console.log('[INFO] MongoDB URI:', process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/password=([^&]+)|:([^:/@]+)@/, '***') : 'NOT SET');
+
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    const { syncTokenVersionFromDb } = require('./config/version');
+    syncTokenVersionFromDb().catch(() => {});
+    return next();
+  } catch (err) {
+    console.error('❌ MongoDB Connection Error:', err.message);
+    return res.status(503).json({
+      message: 'Database connection unavailable. Please try again in a moment.'
+    });
+  }
+});
+
+// Routes
+app.use('/api/medicines', inventoryRoutes);
+app.use('/api/sales', salesRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/credits', creditRoutes);
+
+// Root Route (Good for checking if server is live)
+app.get('/', (req, res) => {
+  res.send('DAV Pharma API is Running!');
+});
+
+// --- CRITICAL CHANGE FOR VERCEL ---
+const PORT = process.env.PORT || 5000; 
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
