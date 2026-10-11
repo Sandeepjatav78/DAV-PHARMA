@@ -839,7 +839,7 @@ const createPurchaseBill = async (req, res) => {
       const mrp = number(item.mrp);
       const rate = number(item.rate);
       const netRate = number(item.netRate, rate);
-      const sellingPrice = number(item.sellingPrice, rate);
+      const sellingPrice = number(item.sellingPrice, Number((mrp * 0.9).toFixed(2)));
       const discount = number(item.discount);
       const gst = number(item.gst);
       if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(netRate) || netRate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
@@ -988,7 +988,7 @@ const updatePurchaseBill = async (req, res) => {
       const mrp = number(item.mrp);
       const rate = number(item.rate);
       const netRate = number(item.netRate, rate);
-      const sellingPrice = number(item.sellingPrice, rate);
+      const sellingPrice = number(item.sellingPrice, Number((mrp * 0.9).toFixed(2)));
       const discount = number(item.discount);
       const gst = number(item.gst);
       if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(netRate) || netRate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
@@ -1358,7 +1358,7 @@ QUANTITY & FREE ITEMS RULES (CRITICAL — READ CAREFULLY):
 - "rate" is the per-unit charge for the item. A free line always has rate 0.
 - "netRate" is the real per-unit cost paid after scheme/discount (very important). Prefer the bill's printed Net Rate column; else compute lineAmount / totalPiecesReceived.
 - "amount" = final line amount EXACTLY as printed on the bill. NEVER recalculate it — trust the printed value. If no printed amount, calculate: quantity × rate × (1 − discount/100) × (1 + gst/100).
-- "sellingPrice" = the price this pharmacy should sell at. If the bill does not show a selling price, use rate.
+- "sellingPrice" = the pharmacy's sale price per unit. If the bill does not show a selling price, calculate it as MRP minus 10% (MRP × 0.90). The pharmacy user can edit this value before saving.
 
 DISCOUNT EXTRACTION RULES (IMPORTANT — read carefully, this is commonly missed):
 - "discount" (per item, inside "items") is the PERCENTAGE discount for that line, taken from a column labelled "Disc", "Disc%", "Sch%", "Discount %" etc. in the items table. Read the printed number exactly (e.g. column shows "10" -> discount: 10). Do NOT leave it at 0 just because it is easy to miss — scan every row's discount column carefully. Only use 0 if the bill truly has no discount column or the cell is blank/dash.

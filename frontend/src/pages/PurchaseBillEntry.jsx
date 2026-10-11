@@ -3,6 +3,10 @@ import api from '../api/axios';
 
 const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', netRate: '', sellingPrice: '', discount: '0', gst: '5', amount: '' });
 const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
+const defaultSellingPrice = (mrp) => {
+  const value = Number(mrp);
+  return Number.isFinite(value) && value > 0 ? (value * 0.9).toFixed(2) : '';
+};
 
 const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
   const [suggestions, setSuggestions] = useState([]);
@@ -160,7 +164,9 @@ const PurchaseBillEntry = () => {
             mrp: String(item.mrp ?? 0),
             rate: String(item.rate ?? 0),
             netRate: String(item.netRate ?? item.rate ?? ''),
-            sellingPrice: '',
+            sellingPrice: item.sellingPrice != null && item.sellingPrice !== ''
+              ? String(item.sellingPrice)
+              : defaultSellingPrice(item.mrp),
             discount: String(item.discount ?? 0),
             gst: String(item.gst ?? 5),
             amount: item.amount != null && Number(item.amount) > 0 ? String(item.amount) : ''
@@ -219,6 +225,16 @@ const PurchaseBillEntry = () => {
     clearError(`row${index}.${field}`);
     setItems(prev => prev.map((item, itemIndex) => {
       if (itemIndex !== index) return item;
+      if (field === 'mrp') {
+        const previousDefault = Number(item.mrp || 0) * 0.9;
+        const currentSellingPrice = Number(item.sellingPrice);
+        const shouldUpdateDefault = item.sellingPrice === '' || Math.abs(currentSellingPrice - previousDefault) < 0.01;
+        return {
+          ...item,
+          mrp: value,
+          ...(shouldUpdateDefault ? { sellingPrice: defaultSellingPrice(value) } : {})
+        };
+      }
       return { ...item, [field]: value };
     }));
   };
@@ -457,7 +473,7 @@ const PurchaseBillEntry = () => {
                   hsnCode: med.hsnCode || it.hsnCode,
                   gst: med.gst != null ? String(med.gst) : it.gst,
                   mrp: med.mrp != null ? String(med.mrp) : it.mrp,
-                  sellingPrice: it.sellingPrice || ''
+                  sellingPrice: it.sellingPrice || defaultSellingPrice(med.mrp)
                 };
               }))}
             /></td>

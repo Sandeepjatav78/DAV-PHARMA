@@ -6,6 +6,10 @@ const dateFmt = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-dig
 const toInputDate = (d) => d.toISOString().slice(0, 10);
 const monthStart = () => { const d = new Date(); d.setDate(1); return toInputDate(d); };
 const today = () => toInputDate(new Date());
+const defaultSellingPrice = (mrp) => {
+  const value = Number(mrp);
+  return Number.isFinite(value) && value > 0 ? (value * 0.9).toFixed(2) : '';
+};
 
 const PurchaseBillHistory = () => {
   const [bills, setBills] = useState([]);
@@ -86,7 +90,7 @@ const PurchaseBillHistory = () => {
       mrp: String(item.mrp ?? ''),
       rate: String(item.rate ?? ''),
       netRate: String(item.netRate ?? item.rate ?? ''),
-      sellingPrice: String(item.sellingPrice ?? ''),
+      sellingPrice: String(item.sellingPrice ?? '') || defaultSellingPrice(item.mrp),
       discount: String(item.discount ?? '0'),
       gst: String(item.gst ?? '5'),
       amount: String(item.amount ?? '')
@@ -98,7 +102,20 @@ const PurchaseBillHistory = () => {
 
   const setEditItem = (index, field, value) => {
     clearEditError(`row${index}.${field}`);
-    setEditItems(prev => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
+    setEditItems(prev => prev.map((item, i) => {
+      if (i !== index) return item;
+      if (field === 'mrp') {
+        const previousDefault = Number(item.mrp || 0) * 0.9;
+        const currentSellingPrice = Number(item.sellingPrice);
+        const shouldUpdateDefault = item.sellingPrice === '' || Math.abs(currentSellingPrice - previousDefault) < 0.01;
+        return {
+          ...item,
+          mrp: value,
+          ...(shouldUpdateDefault ? { sellingPrice: defaultSellingPrice(value) } : {})
+        };
+      }
+      return { ...item, [field]: value };
+    }));
   };
 
   const focusEditError = (key) => {
