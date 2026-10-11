@@ -30,9 +30,10 @@ const Sidebar = () => {
       
       {/* --- LEFT: LOGO & ROLE --- */}
       <div className="flex items-center gap-3">
-        <h2 className="text-xl font-extrabold text-teal-800 tracking-tight flex items-center gap-2">
-            🌿 <span className="hidden md:inline">DAV Pharma</span>
-        </h2>
+        <div className="flex items-center gap-2">
+          <img src="/dav-pharma-logo.png" alt="DAV" className="h-10 w-10 rounded-lg object-contain" />
+          <span className="font-extrabold tracking-wide text-teal-700">PHARMA</span>
+        </div>
         {/* Role Badge only shows for Admin */}
         {userRole === 'admin' && (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase border tracking-wide bg-purple-50 text-purple-700 border-purple-100">

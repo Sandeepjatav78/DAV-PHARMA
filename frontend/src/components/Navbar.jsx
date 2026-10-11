@@ -21,7 +21,8 @@ const Navbar = () => {
     <nav className="navbar">
       {/* --- LOGO --- */}
       <div className="nav-logo">
-        DAV Pharma
+        <img src="/dav-pharma-logo.png" alt="DAV" className="h-10 w-10 rounded-lg object-contain" />
+        <span>PHARMA</span>
       </div>
 
       {/* --- LINKS --- */}

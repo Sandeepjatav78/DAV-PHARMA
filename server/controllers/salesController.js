@@ -118,7 +118,7 @@ exports.getCustomerLastPrices = async (req, res) => {
 // --- 2. CREATE SALE (Fixes Invoice ID & Stock Reduction) ---
 exports.createSale = async (req, res) => {
   try {
-    const { items, customerDetails, totalAmount, paymentMode, isBillRequired, invoiceNo, customDate, isCredit, creditNotes } = req.body;
+    const { items, customerDetails, totalAmount, paymentMode, isBillRequired, invoiceNo, customDate, isCredit, creditNotes, userRole } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "No sale items provided" });
@@ -319,7 +319,7 @@ exports.createSale = async (req, res) => {
       isBillRequired: isBillRequired,
       isCredit: isCredit || false,
       creditNotes: creditNotes || '',
-      createdBy: userRole || 'admin',
+      createdBy: userRole || req.user?.role || 'admin',
       date: safeDateOrNull(customDate) || new Date()
     });
 

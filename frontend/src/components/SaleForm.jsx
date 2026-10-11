@@ -402,8 +402,10 @@ const SaleForm = () => {
     }
 
     const finalItems = cart.map((i) => {
-        let quantityToSend = i.unit === 'loose' ? (i.quantity / i.packSize) : i.quantity;
-        quantityToSend = parseFloat(quantityToSend.toFixed(4));
+        // The API converts pack quantities to tablets using packSize. Loose
+        // quantities must remain tablet counts; converting them here would
+        // apply the pack conversion twice and reject valid sales.
+        const quantityToSend = parseFloat(Number(i.quantity || 0).toFixed(4));
       const previousSale = getCustomerLastPrice(i);
         return { 
             ...i, 

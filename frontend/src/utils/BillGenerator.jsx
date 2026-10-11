@@ -115,12 +115,12 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
           body { font-family: 'Manrope', sans-serif; margin: 0; padding: 0; color: var(--text); background: #fff; font-size: 10px; line-height: 1.3; }
           @page { size: A5; margin: 5; }
           .page { width: 148mm; height: 210mm; padding: 10mm; position: relative; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; margin: 0 auto; }
-          .watermark::before { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-image: url('/Logo2.png'); background-repeat: no-repeat; background-position: center center; background-size: 50%; opacity: 0.05; z-index: -1; }
+          .watermark::before { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-image: url('/dav-pharma-logo.png'); background-repeat: no-repeat; background-position: center center; background-size: 50%; opacity: 0.05; z-index: -1; }
           .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid var(--primary); padding-bottom: 12px; margin-bottom: 15px; }
           .header-left { width: 65%; display: flex; flex-direction: column; gap: 5px; }
           .logo-row { display: flex; align-items: center; gap: 12px; }
-          .logo-img { height: 45px; width: auto; }
-          .brand-name { font-size: 32px; color: var(--primary); margin: 0; font-weight: 800; letter-spacing: -0.5px; line-height: 1; }
+          .logo-img { height: 58px; width: 58px; object-fit: contain; }
+          .logo-name { font-size: 22px; font-weight: 800; letter-spacing: 1px; color: var(--primary); }
           .brand-info { font-size: 10px; color: #444; margin-top: 5px; }
           .header-right { text-align: right; width: 35%; }
           .invoice-label { background: var(--primary); color: white; padding: 6px 12px; font-size: 14px; font-weight: 700; text-transform: uppercase; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
@@ -159,8 +159,8 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
         <div class="page watermark">
             <div class="header">
                 <div class="header-left">
-                    <div class="logo-row"><img src="/Logo2.png" class="logo-img" /><h1 class="brand-name">${PHARMACY_DETAILS.name}</h1></div>
-                    <div class="brand-info">${PHARMACY_DETAILS.address}<br><strong>DL:</strong> ${PHARMACY_DETAILS.dlNo}<br><strong>Phone:</strong> ${PHARMACY_DETAILS.phone}</div>
+                    <div class="logo-row"><img src="/dav-pharma-logo.png" class="logo-img" alt="DAV" /><span class="logo-name">PHARMA</span></div>
+                    <div class="brand-info">${PHARMACY_DETAILS.address}<br><strong>DL:</strong> ${PHARMACY_DETAILS.dlNo}<br><strong>Pharmacist:</strong> ${PHARMACY_DETAILS.pharmacist}<br><strong>Phone:</strong> ${PHARMACY_DETAILS.phone}</div>
                 </div>
                 <div class="header-right">
                     <div class="invoice-label">${headerTitle}</div>

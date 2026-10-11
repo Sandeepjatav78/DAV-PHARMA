@@ -468,7 +468,10 @@ export default function App() {
         </View>
       ) : !token ? (
         <KeyboardAvoidingView style={styles.loginBox} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Text style={styles.loginTitle}>🌿 DAV Pharma</Text>
+          <View style={styles.loginBrand}>
+            <Image source={require('./assets/dav-pharma-logo.png')} style={styles.loginLogo} resizeMode="contain" />
+            <Text style={styles.loginBrandName}>PHARMA</Text>
+          </View>
           <Text style={styles.loginSubtitle}>Purchase bill scan karne ke liye login karein</Text>
           <TextInput
             style={styles.loginInput}
@@ -496,7 +499,10 @@ export default function App() {
 
       {/* HEADER */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>🌿 DAV Pharma</Text>
+        <View style={styles.headerBrand}>
+          <Image source={require('./assets/dav-pharma-logo.png')} style={styles.headerLogo} resizeMode="contain" />
+          <Text style={styles.headerBrandName}>PHARMA</Text>
+        </View>
         <Text style={styles.headerSubtitle}>AI Purchase Bill Scanner</Text>
         <View style={styles.headerBtns}>
           <TouchableOpacity style={styles.newScanBtn} onPress={resetAll}>
@@ -964,14 +970,21 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   loginBox: { flex: 1, backgroundColor: '#f0fdfa', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loginBrand: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   loginTitle: { fontSize: 26, fontWeight: 'bold', color: '#0f766e', marginBottom: 6 },
+  loginBrandName: { fontSize: 26, fontWeight: 'bold', color: '#0f766e', letterSpacing: 1 },
   loginSubtitle: { fontSize: 13, color: '#64748b', marginBottom: 24 },
   loginInput: { width: '100%', maxWidth: 340, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: '#1e293b', marginBottom: 14 },
   loginBtn: { width: '100%', maxWidth: 340, backgroundColor: '#0d9488', borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
   loginBtnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 15 },
   loginHint: { marginTop: 14, fontSize: 11, color: '#94a3b8' },
   header: { backgroundColor: '#0f766e', padding: 20, paddingTop: 10, alignItems: 'center' },
+  headerBrand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  mobileLogo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#ffffff' },
+  loginLogo: { width: 130, height: 130, marginBottom: 8 },
+  headerLogo: { width: 48, height: 48, marginBottom: 4 },
+  headerBrandName: { fontSize: 22, fontWeight: 'bold', color: '#ffffff', letterSpacing: 1 },
   headerSubtitle: { fontSize: 12, color: '#ccfbf1', marginTop: 4 },
   headerBtns: { flexDirection: 'row', position: 'absolute', right: 14, top: 14, gap: 8 },
   newScanBtn: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6 },

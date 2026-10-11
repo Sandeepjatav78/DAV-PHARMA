@@ -37,9 +37,10 @@ const Login = () => {
       <div className="bg-white w-full max-w-sm p-8 rounded-2xl shadow-2xl text-center transform transition-all hover:scale-[1.01]">
         
         {/* Header */}
-        <h2 className="text-3xl font-extrabold text-teal-700 mb-2 tracking-tight">
-          DAV Pharma
-        </h2>
+        <div className="mb-3 flex items-center justify-center gap-3">
+          <img src="/dav-pharma-logo.png" alt="DAV" className="h-28 w-28 rounded-2xl object-contain" />
+          <span className="text-2xl font-extrabold tracking-wide text-teal-700">PHARMA</span>
+        </div>
         <p className="text-gray-400 text-sm font-medium mb-8 uppercase tracking-widest">
           System Login
         </p>
