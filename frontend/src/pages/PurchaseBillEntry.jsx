@@ -1,21 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/axios';
+import { normalizePacking, parsePacking } from '../utils/packing';
 
 const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', netRate: '', sellingPrice: '', discount: '0', gst: '5', amount: '' });
 const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
-const tabletsPerStrip = (packing, fallback = 1) => {
-  const text = String(packing || '');
-  const match = text.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i);
-  if (match) return Number(match[2]) || fallback;
-  const single = text.match(/(\d+(?:\.\d+)?)\s*(?:tab|tablet| गोली)/i);
-  return single ? Number(single[1]) || fallback : fallback;
-};
-const normalizePacking = (packing, fallbackPackSize = 1, fallbackStrips = 1) => {
-  const text = String(packing || '').trim();
-  const numbers = text.match(/\d+(?:\.\d+)?/g)?.map(Number).filter(n => Number.isFinite(n) && n > 0) || [];
-  const packSize = numbers.length >= 2 ? numbers[1] : (numbers[0] || fallbackPackSize);
-  const strips = numbers.length >= 2 ? numbers[0] : fallbackStrips;
-  return Number(strips) > 1 ? `${Math.round(strips)}x${Math.round(packSize)} TAB` : `${Math.round(packSize)} TAB`;
+// Same rounding the server uses for stock units, so default prices match it.
+const tabletsPerStrip = (packing, fallback = 1) => Math.max(1, Math.round(parsePacking(packing, fallback).size));
+// Scanned expiry can be 2028-03, 03/28 or 31/03/2028; the date input needs YYYY-MM-DD.
+const toDateInput = (value) => {
+  const text = String(value || '').trim();
+  const pad = (n) => String(n).padStart(2, '0');
+  const lastDay = (y, m) => new Date(y, m, 0).getDate();
+  const year = (y) => (y.length === 2 ? 2000 + Number(y) : Number(y));
+  let m = text.match(/^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?/);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12) {
+    const y = Number(m[1]), mo = Number(m[2]);
+    const d = m[3] ? Math.min(Math.max(1, Number(m[3])), lastDay(y, mo)) : lastDay(y, mo);
+    return `${y}-${pad(mo)}-${pad(d)}`;
+  }
+  m = text.match(/^(?:(\d{1,2})[/.-])?(\d{1,2})[/.-](\d{2}|\d{4})$/);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12) {
+    const y = year(m[3]), mo = Number(m[2]);
+    const d = m[1] ? Math.min(Math.max(1, Number(m[1])), lastDay(y, mo)) : lastDay(y, mo);
+    return `${y}-${pad(mo)}-${pad(d)}`;
+  }
+  return '';
 };
 const defaultSellingPrice = (mrp, packing, packSize) => {
   const value = Number(mrp);
@@ -173,7 +182,7 @@ const PurchaseBillEntry = () => {
             batchNumber: item.batchNumber || '',
             manufacturer: item.manufacturer || '',
             hsnCode: item.hsnCode || '',
-            expiryDate: item.expiryDate || '',
+            expiryDate: toDateInput(item.expiryDate),
             quantity: String(item.quantity ?? 1),
             freeQuantity: String(item.freeQuantity ?? 0),
             mrp: String(item.mrp ?? 0),

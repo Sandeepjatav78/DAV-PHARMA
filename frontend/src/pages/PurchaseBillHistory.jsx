@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api/axios';
+import { normalizePacking } from '../utils/packing';
 
 const money = (val) => `₹${Number(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateFmt = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
@@ -10,12 +11,6 @@ const defaultSellingPrice = (mrp, packSize = 1) => {
   const value = Number(mrp);
   const size = Number(packSize) || 1;
   return Number.isFinite(value) && value > 0 ? (value / size * 0.9).toFixed(2) : '';
-};
-const normalizePacking = (packing, packSize = 1, stripsPerBox = 1) => {
-  const numbers = String(packing || '').match(/\d+(?:\.\d+)?/g)?.map(Number).filter(n => Number.isFinite(n) && n > 0) || [];
-  const tabs = numbers.length >= 2 ? numbers[1] : (numbers[0] || packSize);
-  const strips = numbers.length >= 2 ? numbers[0] : stripsPerBox;
-  return Number(strips) > 1 ? `${Math.round(strips)}x${Math.round(tabs)} TAB` : `${Math.round(tabs)} TAB`;
 };
 
 const PurchaseBillHistory = () => {

@@ -1,14 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
+import { normalizePacking } from '../utils/packing';
 import { fetchScheduleCategories, SCHEDULE_BADGE_STYLES, DEFAULT_SCHEDULE_BADGE_STYLE } from '../utils/scheduleCategories';
 
-const displayPacking = (packing, packSize = 1, stripsPerBox = 1) => {
-  const numbers = String(packing || '').match(/\d+(?:\.\d+)?/g)?.map(Number).filter(n => Number.isFinite(n) && n > 0) || [];
-  const tabs = numbers.length >= 2 ? numbers[1] : (numbers[0] || packSize);
-  const strips = numbers.length >= 2 ? numbers[0] : stripsPerBox;
-  return Number(strips) > 1 ? `${Math.round(strips)}x${Math.round(tabs)} TAB` : `${Math.round(tabs)} TAB`;
-};
 
 const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDetecting }) => {
   const [editId, setEditId] = useState(null);
@@ -78,7 +73,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
             "HSN": m.hsnCode || '-',
             "Batch": m.batchNumber,
             "Party Name": m.partyName || '-',
-            "Packing": displayPacking(m.packing, packSize, stripsPerBox),
+            "Packing": normalizePacking(m.packing, packSize, stripsPerBox),
             "Strips per Box": stripsPerBox,
             "Tablets per Strip": packSize,
             "Qty (Sealed Strips)": strips,
@@ -415,7 +410,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
                     <td className={`${tdClass} text-center font-semibold text-gray-600`}>
                         <span title={`${m.stripsPerBox || 1} strips per box, ${m.packSize || 10} tablets per strip`}>
-                            {displayPacking(m.packing, m.packSize || 10, m.stripsPerBox || 1)}
+                            {normalizePacking(m.packing, m.packSize || 10, m.stripsPerBox || 1)}
                         </span>
                     </td>
 

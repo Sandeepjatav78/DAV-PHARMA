@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Medicine = require('../models/Medicine');
 const Sale = require('../models/Sale'); // <--- IMPORT SALE MODEL ZARURI HAI
 const PendingDose = require('../models/PendingDose');
@@ -8,6 +9,65 @@ const Supplier = require('../models/Supplier');
 const cloudinary = require('cloudinary').v2;
 const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES, SCHEDULE_INFO } = require('../utils/scheduleDetector');
 const { parsePacking, normalizePacking, addStock, getTotalUnits, setStockFromUnits } = require('../utils/stockUnits');
+
+// --- SHARED HELPERS (purchase bill rows) ---
+// Expiry on bills/scans comes as 2028-03-31, 2028-03, 03/28, 03/2028 or
+// 31/03/2028. Returns the date (month-only values -> last day of month) or null.
+const parseExpiryDate = (value) => {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const endOfMonth = (year, month) => new Date(Date.UTC(year, month, 0));
+  const fullYear = (y) => (y.length === 2 ? 2000 + Number(y) : Number(y));
+  let m = text.match(/^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?(?:T.*)?$/);
+  if (m) {
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    if (month < 1 || month > 12) return null;
+    const last = endOfMonth(year, month);
+    if (!m[3]) return last;
+    const day = Number(m[3]);
+    if (day < 1) return null;
+    return day >= last.getUTCDate() ? last : new Date(Date.UTC(year, month - 1, day));
+  }
+  m = text.match(/^(\d{1,2})[/.-](\d{2}|\d{4})$/);
+  if (m) {
+    const month = Number(m[1]);
+    return month >= 1 && month <= 12 ? endOfMonth(fullYear(m[2]), month) : null;
+  }
+  m = text.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/);
+  if (m) {
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+    if (month < 1 || month > 12 || day < 1) return null;
+    const year = fullYear(m[3]);
+    const last = endOfMonth(year, month);
+    return day >= last.getUTCDate() ? last : new Date(Date.UTC(year, month - 1, day));
+  }
+  return null;
+};
+
+// Names exactly which fields of a purchase row are wrong, so the user can fix them.
+const purchaseRowProblems = (row) => {
+  const problems = [];
+  const bad = (n) => !Number.isFinite(n) || n < 0;
+  if (!row.productName) problems.push('medicine name');
+  if (!row.batchNumber) problems.push('batch');
+  if (!row.expiryDate) problems.push('expiry date');
+  if (!Number.isFinite(row.quantity) || row.quantity <= 0) problems.push('qty');
+  if (bad(row.freeQuantity)) problems.push('free qty');
+  if (bad(row.mrp)) problems.push('MRP');
+  if (bad(row.rate)) problems.push('rate');
+  if (bad(row.netRate)) problems.push('net rate');
+  if (bad(row.sellingPrice)) problems.push('selling price');
+  if (bad(row.discount)) problems.push('discount');
+  if (bad(row.gst)) problems.push('GST');
+  return problems;
+};
+
+const findMedicineByNameAndBatch = (productName, batchNumber, session) => Medicine.findOne({
+  productName: { $regex: `^${escapeRegex(productName)}$`, $options: 'i' },
+  batchNumber: { $regex: `^${escapeRegex(batchNumber)}$`, $options: 'i' }
+}).session(session || null);
 
 // --- SHARED HELPERS (supplier matching / ledger) ---
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -830,7 +890,7 @@ const createPurchaseBill = async (req, res) => {
     const preItems = items.map((item, index) => {
       const productName = String(item.productName || '').trim();
       const batchNumber = String(item.batchNumber || '').trim();
-      const expiryDate = item.expiryDate;
+      const expiryDate = parseExpiryDate(item.expiryDate);
       const quantity = number(item.quantity);
       const freeQuantity = number(item.freeQuantity);
       const packingInfo = parsePacking(item.packing, item.packSize, item.stripsPerBox);
@@ -843,8 +903,9 @@ const createPurchaseBill = async (req, res) => {
       const sellingPrice = Number((sellingPricePerTablet * Math.max(packSize, 1)).toFixed(2));
       const discount = number(item.discount);
       const gst = number(item.gst);
-      if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(netRate) || netRate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
-        throw new Error(`Medicine row ${index + 1} has missing or invalid details`);
+      const problems = purchaseRowProblems({ productName, batchNumber, expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst });
+      if (problems.length) {
+        throw new Error(`Row ${index + 1}${productName ? ` (${productName})` : ''}: ${problems.join(', ')} galat/khali hai — theek karke dobara save karein.`);
       }
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
@@ -901,54 +962,63 @@ const createPurchaseBill = async (req, res) => {
 
     // Look up which items are brand-new medicines first, so their schedule
     // (H/H1/None) can be AI-classified in ONE batched Gemini call instead of
-    // one call per item.
-    const existingByItem = new Map();
+    // one call per item. Done before the transaction (external API call).
+    const newItemNames = [];
     for (const item of validItems) {
-      const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
-      existingByItem.set(item, existing);
+      if (!(await findMedicineByNameAndBatch(item.productName, item.batchNumber))) newItemNames.push(item.productName);
     }
-    const newItemNames = validItems.filter((item) => !existingByItem.get(item)).map((item) => item.productName);
     const newItemScheduleMap = newItemNames.length ? await classifyMedicinesWithAI(newItemNames) : new Map();
 
-    for (const item of validItems) {
-      const existing = existingByItem.get(item);
-      const medicineData = { packing: item.packing, stripsPerBox: item.stripsPerBox, mrp: item.mrp, sellingPrice: item.sellingPrice, sellingPricePerTablet: item.sellingPricePerTablet, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: primaryBillImage };
-      if (existing) {
-        addStock(existing, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
-        Object.assign(existing, medicineData);
-        await existing.save();
-      } else {
-        const scheduleResult = newItemScheduleMap.get(String(item.productName || '').trim());
-        const stock = { quantity: 0, looseQty: 0, packSize: item.packSize };
-        addStock(stock, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
-        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stock.quantity, looseQty: stock.looseQty, packSize: stock.packSize, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
-      }
-    }
+    // Stock + bill are written in one transaction: if anything fails, no
+    // medicine gets stock without its bill being saved (and vice versa).
+    let bill;
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        for (const item of validItems) {
+          const existing = await findMedicineByNameAndBatch(item.productName, item.batchNumber, session);
+          const medicineData = { packing: item.packing, stripsPerBox: item.stripsPerBox, mrp: item.mrp, sellingPrice: item.sellingPrice, sellingPricePerTablet: item.sellingPricePerTablet, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: primaryBillImage };
+          if (existing) {
+            addStock(existing, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
+            Object.assign(existing, medicineData);
+            await existing.save({ session });
+          } else {
+            const scheduleResult = newItemScheduleMap.get(String(item.productName || '').trim());
+            const stock = { quantity: 0, looseQty: 0, packSize: item.packSize };
+            addStock(stock, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
+            await Medicine.create([{ productName: item.productName, batchNumber: item.batchNumber, quantity: stock.quantity, looseQty: stock.looseQty, packSize: stock.packSize, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData }], { session });
+          }
+        }
 
-    const bill = await PurchaseBill.create({
-      supplierName,
-      supplierGstin: String(req.body.supplierGstin || '').trim(),
-      invoiceNumber,
-      invoiceDate,
-      billType: String(req.body.billType || 'Cash'),
-      paymentMode: String(req.body.paymentMode || 'Cash'),
-      notes: String(req.body.notes || '').trim(),
-      billImage: primaryBillImage,
-      billImages: billImagePaths,
-      items: validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item),
-      subtotal: Number(subtotal.toFixed(2)),
-      discountTotal: Number(discountTotal.toFixed(2)),
-      additionalDiscount: Number(additionalDiscount.toFixed(2)),
-      gstTotal: Number(gstTotal.toFixed(2)),
-      roundOff,
-      grandTotal,
-      amountPaid: Number(amountPaid.toFixed(2)),
-      balanceDue,
-      paymentStatus,
-      paymentRemarks,
-      paymentHistory,
-      createdBy: req.user?.role || 'admin'
-    });
+        const [created] = await PurchaseBill.create([{
+          supplierName,
+          supplierGstin: String(req.body.supplierGstin || '').trim(),
+          invoiceNumber,
+          invoiceDate,
+          billType: String(req.body.billType || 'Cash'),
+          paymentMode: String(req.body.paymentMode || 'Cash'),
+          notes: String(req.body.notes || '').trim(),
+          billImage: primaryBillImage,
+          billImages: billImagePaths,
+          items: validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item),
+          subtotal: Number(subtotal.toFixed(2)),
+          discountTotal: Number(discountTotal.toFixed(2)),
+          additionalDiscount: Number(additionalDiscount.toFixed(2)),
+          gstTotal: Number(gstTotal.toFixed(2)),
+          roundOff,
+          grandTotal,
+          amountPaid: Number(amountPaid.toFixed(2)),
+          balanceDue,
+          paymentStatus,
+          paymentRemarks,
+          paymentHistory,
+          createdBy: req.user?.role || 'admin'
+        }], { session });
+        bill = created;
+      });
+    } finally {
+      await session.endSession();
+    }
 
     AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
     return res.status(201).json(bill);
@@ -980,7 +1050,7 @@ const updatePurchaseBill = async (req, res) => {
     const preItems = items.map((item, index) => {
       const productName = String(item.productName || '').trim();
       const batchNumber = String(item.batchNumber || '').trim();
-      const expiryDate = item.expiryDate;
+      const expiryDate = parseExpiryDate(item.expiryDate);
       const quantity = number(item.quantity);
       const freeQuantity = number(item.freeQuantity);
       const packingInfo = parsePacking(item.packing, item.packSize, item.stripsPerBox);
@@ -993,8 +1063,9 @@ const updatePurchaseBill = async (req, res) => {
       const sellingPrice = Number((sellingPricePerTablet * Math.max(packSize, 1)).toFixed(2));
       const discount = number(item.discount);
       const gst = number(item.gst);
-      if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(netRate) || netRate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
-        throw new Error(`Medicine row ${index + 1} has missing or invalid details`);
+      const problems = purchaseRowProblems({ productName, batchNumber, expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst });
+      if (problems.length) {
+        throw new Error(`Row ${index + 1}${productName ? ` (${productName})` : ''}: ${problems.join(', ')} galat/khali hai — theek karke dobara save karein.`);
       }
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
@@ -1022,75 +1093,92 @@ const updatePurchaseBill = async (req, res) => {
     roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
     grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
 
-    // Revert OLD stock first (so edited/deleted lines don't leave phantom stock)
-    for (const oldItem of existingBill.items || []) {
-      const med = await Medicine.findOne({ productName: { $regex: `^${oldItem.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${oldItem.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
-      if (!med) continue;
-      const revertUnits = Math.round((Number(oldItem.quantity || 0) + Number(oldItem.freeQuantity || 0)) * (Number(oldItem.stripsPerBox) || 1) * (Number(med.packSize) || 1));
-      setStockFromUnits(med, getTotalUnits(med) - revertUnits, med.packSize);
-      if (getTotalUnits(med) === 0) await Medicine.deleteOne({ _id: med._id });
-      else await med.save();
-    }
-
     const newBillImagePaths = Array.isArray(req.files) ? req.files.map(f => f.path) : [];
     const updatedBillImages = newBillImagePaths.length > 0 ? newBillImagePaths : (existingBill.billImages && existingBill.billImages.length > 0 ? existingBill.billImages : (existingBill.billImage ? [existingBill.billImage] : []));
     const updatedPrimaryBillImage = updatedBillImages[0] || null;
 
-    // Apply NEW stock (batch AI-classify schedule for brand-new items first)
-    const existingByUpdateItem = new Map();
+    // Batch AI-classify schedule for brand-new items before the transaction
+    // (external API call).
+    const newUpdateItemNames = [];
     for (const item of validItems) {
-      const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
-      existingByUpdateItem.set(item, existing);
+      if (!(await findMedicineByNameAndBatch(item.productName, item.batchNumber))) newUpdateItemNames.push(item.productName);
     }
-    const newUpdateItemNames = validItems.filter((item) => !existingByUpdateItem.get(item)).map((item) => item.productName);
     const newUpdateScheduleMap = newUpdateItemNames.length ? await classifyMedicinesWithAI(newUpdateItemNames) : new Map();
 
-    for (const item of validItems) {
-      const existing = existingByUpdateItem.get(item);
-      const medicineData = { packing: item.packing, stripsPerBox: item.stripsPerBox, mrp: item.mrp, sellingPrice: item.sellingPrice, sellingPricePerTablet: item.sellingPricePerTablet, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: updatedPrimaryBillImage };
-      if (existing) {
-        addStock(existing, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
-        Object.assign(existing, medicineData);
-        await existing.save();
-      } else {
-        const scheduleResult = newUpdateScheduleMap.get(String(item.productName || '').trim());
-        const stock = { quantity: 0, looseQty: 0, packSize: item.packSize };
-        addStock(stock, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
-        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stock.quantity, looseQty: stock.looseQty, packSize: stock.packSize, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
-      }
+    // Revert old stock, apply new stock and save the bill in one transaction,
+    // so a failure can't leave inventory half-updated.
+    let savedBill;
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const bill = await PurchaseBill.findById(billId).session(session);
+        // Schedule of medicines removed by the revert, reused if they come back.
+        const revertedSchedules = new Map();
+
+        // Revert OLD stock first (so edited/deleted lines don't leave phantom stock)
+        for (const oldItem of bill.items || []) {
+          const med = await findMedicineByNameAndBatch(oldItem.productName, oldItem.batchNumber, session);
+          if (!med) continue;
+          const revertUnits = Math.round((Number(oldItem.quantity || 0) + Number(oldItem.freeQuantity || 0)) * (Number(oldItem.stripsPerBox) || 1) * (Number(med.packSize) || 1));
+          setStockFromUnits(med, getTotalUnits(med) - revertUnits, med.packSize);
+          if (getTotalUnits(med) === 0) {
+            revertedSchedules.set(`${med.productName}|${med.batchNumber}`.toLowerCase(), { category: med.scheduleCategory });
+            await Medicine.deleteOne({ _id: med._id }, { session });
+          } else await med.save({ session });
+        }
+
+        // Apply NEW stock
+        for (const item of validItems) {
+          const existing = await findMedicineByNameAndBatch(item.productName, item.batchNumber, session);
+          const medicineData = { packing: item.packing, stripsPerBox: item.stripsPerBox, mrp: item.mrp, sellingPrice: item.sellingPrice, sellingPricePerTablet: item.sellingPricePerTablet, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: updatedPrimaryBillImage };
+          if (existing) {
+            addStock(existing, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
+            Object.assign(existing, medicineData);
+            await existing.save({ session });
+          } else {
+            const scheduleResult = revertedSchedules.get(`${item.productName}|${item.batchNumber}`.toLowerCase()) || newUpdateScheduleMap.get(String(item.productName || '').trim());
+            const stock = { quantity: 0, looseQty: 0, packSize: item.packSize };
+            addStock(stock, item.quantity, item.freeQuantity, item.packSize, item.stripsPerBox);
+            await Medicine.create([{ productName: item.productName, batchNumber: item.batchNumber, quantity: stock.quantity, looseQty: stock.looseQty, packSize: stock.packSize, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData }], { session });
+          }
+        }
+
+        // Keep existing payment records; recompute status from new total
+        let amountPaid = Math.min(Number(bill.amountPaid || 0), grandTotal);
+        const balanceDue = Number(Math.max(0, grandTotal - amountPaid).toFixed(2));
+        let paymentStatus = 'Credit';
+        if (balanceDue <= 0) paymentStatus = 'Paid';
+        else if (amountPaid > 0) paymentStatus = 'Partial';
+
+        bill.supplierName = supplierName;
+        bill.supplierGstin = String(req.body.supplierGstin || '').trim();
+        bill.invoiceNumber = invoiceNumber;
+        bill.invoiceDate = invoiceDate;
+        bill.billType = String(req.body.billType || 'Credit');
+        bill.paymentMode = String(req.body.paymentMode || 'Credit');
+        bill.notes = String(req.body.notes || '').trim();
+        bill.billImage = updatedPrimaryBillImage;
+        bill.billImages = updatedBillImages;
+        bill.items = validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item);
+        bill.subtotal = Number(subtotal.toFixed(2));
+        bill.discountTotal = Number(discountTotal.toFixed(2));
+        bill.additionalDiscount = Number(additionalDiscount.toFixed(2));
+        bill.gstTotal = Number(gstTotal.toFixed(2));
+        bill.roundOff = roundOff;
+        bill.grandTotal = grandTotal;
+        bill.amountPaid = Number(amountPaid.toFixed(2));
+        bill.balanceDue = balanceDue;
+        bill.paymentStatus = paymentStatus;
+        bill.paymentRemarks = String(req.body.paymentRemarks || req.body.notes || '').trim();
+        await bill.save({ session });
+        savedBill = bill;
+      });
+    } finally {
+      await session.endSession();
     }
 
-    // Keep existing payment records; recompute status from new total
-    let amountPaid = Math.min(Number(existingBill.amountPaid || 0), grandTotal);
-    const balanceDue = Number(Math.max(0, grandTotal - amountPaid).toFixed(2));
-    let paymentStatus = 'Credit';
-    if (balanceDue <= 0) paymentStatus = 'Paid';
-    else if (amountPaid > 0) paymentStatus = 'Partial';
-
-    existingBill.supplierName = supplierName;
-    existingBill.supplierGstin = String(req.body.supplierGstin || '').trim();
-    existingBill.invoiceNumber = invoiceNumber;
-    existingBill.invoiceDate = invoiceDate;
-    existingBill.billType = String(req.body.billType || 'Credit');
-    existingBill.paymentMode = String(req.body.paymentMode || 'Credit');
-    existingBill.notes = String(req.body.notes || '').trim();
-    existingBill.billImage = updatedPrimaryBillImage;
-    existingBill.billImages = updatedBillImages;
-    existingBill.items = validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item);
-    existingBill.subtotal = Number(subtotal.toFixed(2));
-    existingBill.discountTotal = Number(discountTotal.toFixed(2));
-    existingBill.additionalDiscount = Number(additionalDiscount.toFixed(2));
-    existingBill.gstTotal = Number(gstTotal.toFixed(2));
-    existingBill.roundOff = roundOff;
-    existingBill.grandTotal = grandTotal;
-    existingBill.amountPaid = Number(amountPaid.toFixed(2));
-    existingBill.balanceDue = balanceDue;
-    existingBill.paymentStatus = paymentStatus;
-    existingBill.paymentRemarks = String(req.body.paymentRemarks || req.body.notes || '').trim();
-    await existingBill.save();
-
-    AuditLog.create({ action: 'UPDATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: existingBill._id.toString(), message: `Purchase invoice ${invoiceNumber} updated`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (UPDATE_PURCHASE_BILL):', err.message));
-    return res.json(existingBill);
+    AuditLog.create({ action: 'UPDATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: savedBill._id.toString(), message: `Purchase invoice ${invoiceNumber} updated`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue: savedBill.balanceDue, paymentStatus: savedBill.paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (UPDATE_PURCHASE_BILL):', err.message));
+    return res.json(savedBill);
   } catch (err) {
     console.error('[Error] updatePurchaseBill:', err.message);
     return res.status(400).json({ message: err.message || 'Could not update purchase bill' });
