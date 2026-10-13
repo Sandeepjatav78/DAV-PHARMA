@@ -22,6 +22,15 @@ const to12HourTimeFrom24 = (time24, dateStr) => {
     return parsed.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
+const DEFAULT_DISCOUNT = 10;
+
+// Rate after taking `disc`% off MRP, rounded to paise.
+const rateFromMrp = (mrp, disc) => {
+    const m = parseFloat(mrp) || 0;
+    const d = parseFloat(disc) || 0;
+    return parseFloat((m - m * (d / 100)).toFixed(2));
+};
+
 const ManualBill = () => {
   const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '', mode: 'Cash' });
     const [invoiceNo, setInvoiceNo] = useState('Loading...');
@@ -43,9 +52,25 @@ const ManualBill = () => {
   // ✅ ADDED HSN & GST TO STATE
   const [currentItem, setCurrentItem] = useState({
     id: null, 
-    name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1,
+    name: '', batch: '', expiry: '', mrp: '', discount: DEFAULT_DISCOUNT, price: '', quantity: 1, unit: 'pack', packSize: 1,
     hsn: '', gst: 0 
   });
+
+  // MRP or Disc% changed -> recalc rate; rate changed -> recalc Disc%.
+  const handleMrpChange = (val) => {
+      setCurrentItem(prev => ({ ...prev, mrp: val, price: val === '' ? prev.price : rateFromMrp(val, prev.discount) }));
+  };
+  const handleDiscountChange = (val) => {
+      setCurrentItem(prev => ({ ...prev, discount: val, price: parseFloat(prev.mrp) > 0 ? rateFromMrp(prev.mrp, val) : prev.price }));
+  };
+  const handlePriceChange = (val) => {
+      setCurrentItem(prev => {
+          const mrp = parseFloat(prev.mrp) || 0;
+          const rate = parseFloat(val);
+          const discount = mrp > 0 && !isNaN(rate) ? parseFloat((((mrp - rate) / mrp) * 100).toFixed(2)) : prev.discount;
+          return { ...prev, price: val, discount };
+      });
+  };
 
   const [cart, setCart] = useState([]);
   const [query, setQuery] = useState("");
@@ -160,13 +185,15 @@ const ManualBill = () => {
 
       suggestionSelectionLockRef.current = true;
 
+      const mrp = Number(med.mrp) || 0;
       setCurrentItem({
           id: med._id, 
           name: med.productName,
           batch: med.batchNumber || '',
           expiry: med.expiryDate ? new Date(med.expiryDate).toISOString().split('T')[0] : '',
-          mrp: med.mrp || '',
-          price: med.sellingPrice || '',
+          mrp: mrp || '',
+          discount: DEFAULT_DISCOUNT,
+          price: mrp > 0 ? rateFromMrp(mrp, DEFAULT_DISCOUNT) : (med.sellingPrice || ''),
           quantity: 1,
           unit: 'pack', 
           packSize: med.packSize || 10,
@@ -193,11 +220,12 @@ const ManualBill = () => {
       total: rowTotal,
             hsn: String(currentItem.hsn || '').trim(),
       gst: currentItem.gst || 0,
+      discount: parseFloat(currentItem.discount) || 0,
       medicineId: currentItem.id || null, 
     };
     setCart([...cart, newItem]);
     
-    setCurrentItem({ id: null, name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1, hsn: '', gst: 0 });
+    setCurrentItem({ id: null, name: '', batch: '', expiry: '', mrp: '', discount: DEFAULT_DISCOUNT, price: '', quantity: 1, unit: 'pack', packSize: 1, hsn: '', gst: 0 });
     setQuery(""); 
   };
 
@@ -303,6 +331,7 @@ const ManualBill = () => {
     }
   };
 
+  const labelClass = "block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1";
   const inputClass = "w-full p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-all";
 
   return (
@@ -401,29 +430,58 @@ const ManualBill = () => {
                 </div>
                 
                 <div className="grid grid-cols-2 gap-3">
-                    <input className={inputClass} placeholder="Batch" value={currentItem.batch} onChange={e=>setCurrentItem({...currentItem, batch:e.target.value})} />
-                    <input type="date" className={inputClass} placeholder="Expiry" value={currentItem.expiry} onChange={e=>setCurrentItem({...currentItem, expiry:e.target.value})} />
+                    <label className="block">
+                        <span className={labelClass}>Batch</span>
+                        <input className={inputClass} placeholder="Batch" value={currentItem.batch} onChange={e=>setCurrentItem({...currentItem, batch:e.target.value})} />
+                    </label>
+                    <label className="block">
+                        <span className={labelClass}>Expiry</span>
+                        <input type="date" className={inputClass} placeholder="Expiry" value={currentItem.expiry} onChange={e=>setCurrentItem({...currentItem, expiry:e.target.value})} />
+                    </label>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                    <input className={inputClass} placeholder="HSN" value={currentItem.hsn} onChange={e=>setCurrentItem({...currentItem, hsn:e.target.value})} />
-                    <input type="number" className={inputClass} placeholder="GST %" value={currentItem.gst} onChange={e=>setCurrentItem({...currentItem, gst:e.target.value})} />
+                    <label className="block">
+                        <span className={labelClass}>HSN</span>
+                        <input className={inputClass} placeholder="HSN" value={currentItem.hsn} onChange={e=>setCurrentItem({...currentItem, hsn:e.target.value})} />
+                    </label>
+                    <label className="block">
+                        <span className={labelClass}>GST %</span>
+                        <input type="number" className={inputClass} placeholder="GST %" value={currentItem.gst} onChange={e=>setCurrentItem({...currentItem, gst:e.target.value})} />
+                    </label>
                 </div>
 
                 <div className="grid grid-cols-3 gap-3">
-                    <input type="number" className={inputClass} placeholder="MRP" value={currentItem.mrp} onChange={e=>setCurrentItem({...currentItem, mrp:e.target.value})} />
-                    <input type="number" className={`${inputClass} font-bold text-teal-700`} placeholder="Price *" value={currentItem.price} onChange={e=>setCurrentItem({...currentItem, price:e.target.value})} />
-                    <select className={inputClass} value={currentItem.unit} onChange={e=>setCurrentItem({...currentItem, unit:e.target.value})}>
-                        <option value="pack">Pack</option>
-                        <option value="loose">Loose</option>
-                    </select>
+                    <label className="block">
+                        <span className={labelClass}>MRP (₹)</span>
+                        <input type="number" className={inputClass} placeholder="MRP" value={currentItem.mrp} onChange={e=>handleMrpChange(e.target.value)} />
+                    </label>
+                    <label className="block">
+                        <span className={labelClass}>Discount %</span>
+                        <input type="number" className={inputClass} placeholder="10" value={currentItem.discount} onChange={e=>handleDiscountChange(e.target.value)} />
+                    </label>
+                    <label className="block">
+                        <span className={labelClass}>Rate (₹) *</span>
+                        <input type="number" className={`${inputClass} font-bold text-teal-700`} placeholder="Rate *" value={currentItem.price} onChange={e=>handlePriceChange(e.target.value)} />
+                    </label>
                 </div>
-                
-                <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-gray-500">Qty:</span>
-                      <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
-                      <span className="text-xs font-bold text-gray-500 ml-2">Pack Size:</span>
-                      <input type="number" className={inputClass} placeholder="10" value={currentItem.packSize} onChange={e=>setCurrentItem({...currentItem, packSize:e.target.value})} />
+
+                <div className="grid grid-cols-3 gap-3">
+                    <label className="block">
+                        <span className={labelClass}>Qty *</span>
+                        <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
+                    </label>
+                    <label className="block">
+                        <span className={labelClass}>Unit</span>
+                        <select className={inputClass} value={currentItem.unit} onChange={e=>setCurrentItem({...currentItem, unit:e.target.value})}>
+                            <option value="pack">Pack</option>
+                            <option value="loose">Loose</option>
+                        </select>
+                    </label>
+                    <label className="block">
+                        <span className={labelClass}>Pack Size</span>
+                        <input type="number" className={inputClass} placeholder="10" value={currentItem.packSize} onChange={e=>setCurrentItem({...currentItem, packSize:e.target.value})} />
+                    </label>
                 </div>
 
                 <button onClick={handleAddItem} className="w-full mt-2 bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 rounded-lg shadow-md transition-all transform active:scale-95">
@@ -448,14 +506,16 @@ const ManualBill = () => {
                             <th className="p-3 font-semibold text-gray-600">Item</th>
                             <th className="p-3 font-semibold text-gray-600">Batch</th>
                             <th className="p-3 font-semibold text-gray-600 text-center">Qty / Unit</th>
-                            <th className="p-3 font-semibold text-gray-600 text-right">Price</th>
+                            <th className="p-3 font-semibold text-gray-600 text-right">MRP</th>
+                            <th className="p-3 font-semibold text-gray-600 text-right">Disc%</th>
+                            <th className="p-3 font-semibold text-gray-600 text-right">Rate</th>
                             <th className="p-3 font-semibold text-gray-600 text-right">Total</th>
                             <th className="p-3 font-semibold text-gray-600 w-8"></th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                         {cart.length === 0 ? (
-                            <tr><td colSpan="6" className="text-center py-10 text-gray-400 italic">No items added yet.</td></tr>
+                            <tr><td colSpan="8" className="text-center py-10 text-gray-400 italic">No items added yet.</td></tr>
                         ) : (
                             cart.map((item, i) => (
                                 <tr key={i} className="hover:bg-gray-50 transition-colors">
@@ -470,6 +530,8 @@ const ManualBill = () => {
                                             <span onClick={() => toggleUnit(i)} className={`text-[9px] font-bold px-2 py-0.5 rounded cursor-pointer uppercase border ${item.unit === 'loose' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-teal-50 text-teal-700 border-teal-200'}`}>{item.unit === 'loose' ? '✂️ LOOSE' : '📦 PACK'}</span>
                                         </div>
                                     </td>
+                                    <td className="p-3 text-right text-gray-400">{item.mrp ? `₹${item.mrp}` : '-'}</td>
+                                    <td className="p-3 text-right text-red-500">{item.discount > 0 ? `${item.discount}%` : '-'}</td>
                                     <td className="p-3 text-right text-gray-600">₹{item.price}</td>
                                     <td className="p-3 text-right font-bold text-teal-600">₹{item.total.toFixed(2)}</td>
                                     <td className="p-3 text-center">
