@@ -4,9 +4,6 @@ import { normalizePacking } from '../utils/packing';
 
 const money = (val) => `₹${Number(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateFmt = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
-const toInputDate = (d) => d.toISOString().slice(0, 10);
-const monthStart = () => { const d = new Date(); d.setDate(1); return toInputDate(d); };
-const today = () => toInputDate(new Date());
 const defaultSellingPrice = (mrp, packSize = 1) => {
   const value = Number(mrp);
   const size = Number(packSize) || 1;
@@ -19,8 +16,8 @@ const PurchaseBillHistory = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('ALL');
-  const [from, setFrom] = useState(monthStart());
-  const [to, setTo] = useState(today());
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [limit] = useState(200);
